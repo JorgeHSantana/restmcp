@@ -198,7 +198,7 @@ result = GetProductDetailsService(
 
 ### `Endpoint`
 
-Rota HTTP que auto-registra no singleton `Server` ao ser instanciada. Valida parâmetros, delega ao callback e retorna JSON padronizado.
+Rota HTTP que auto-registra no singleton `Server` no momento em que a classe é definida. Valida parâmetros, delega ao callback e retorna JSON padronizado.
 
 **Regras:**
 - O nome da classe deve terminar com `Endpoint`.
@@ -226,6 +226,35 @@ class GetProductEndpoint(Endpoint):
 
     def callback(self, product_id: str) -> dict:
         return GetProductDetailsService().execute(product_id)
+```
+
+Nenhuma instanciação necessária — **definir a classe já é suficiente**. Assim que Python processa o corpo da `class`, a rota é registrada no servidor.
+
+**Desabilitando um endpoint:**
+
+```python
+class GetProductEndpoint(Endpoint):
+    disabled = True   # pula o auto-registro
+    ...
+```
+
+Use `disabled = True` para desativar temporariamente um endpoint sem apagar o código. Ainda pode ser instanciado manualmente se necessário.
+
+**Classes base abstratas** (sem `url`, `method`, `mcp_definition` ou `callback`) nunca são auto-registradas:
+
+```python
+class BaseAuthEndpoint(Endpoint):
+    method = "POST"
+
+    def callback(self, **kwargs):
+        # lógica de autenticação compartilhada
+        ...
+# ↑ Não registrada — url e mcp_definition ausentes
+
+class GetUserEndpoint(BaseAuthEndpoint):
+    mcp_definition = { ... }
+    url = "/api/get-user"
+    # ↑ Registrada automaticamente — todos os atributos obrigatórios presentes
 ```
 
 **Resposta de sucesso:**
@@ -257,7 +286,7 @@ Singleton Flask com dual-mode: HTTP direto ou protocolo MCP via FastMCP.
 
 ```python
 from pythia import Server
-import urls  # importar urls/ dispara o __init__ dos Endpoints e registra todas as rotas
+import urls   # executa urls/__init__.py → importa todos os módulos → registra todas as rotas
 
 server = Server.get_instance()
 
@@ -283,7 +312,7 @@ mcp = server.get_mcp()
 AUTH_API_KEY=minha-chave python main.py
 ```
 
-Todas as rotas (exceto `/health` e `/mcp/tools`) exigem `Authorization: Bearer <chave>`. Múltiplas chaves são suportadas, separadas por vírgula.
+Todas as rotas (exceto `/health` e `/mcp/tools`) exigem `Authorization: Bearer <chave>`. Múltiplas chaves suportadas, separadas por vírgula.
 
 ---
 
@@ -350,8 +379,8 @@ meu-server/
 ├── services/
 │   └── product.py          # GetProductService
 ├── urls/
-│   ├── __init__.py         # importa o módulo get_product
-│   └── get_product.py      # GetProductEndpoint
+│   ├── __init__.py         # auto-scan de urls/ — nunca editar
+│   └── get_product.py      # GetProductEndpoint — auto-registrada no import
 └── main.py
 ```
 
@@ -430,18 +459,22 @@ class GetProductEndpoint(Endpoint):
     def callback(self, product_id: str) -> dict:
         return GetProductService().execute(product_id)
 
-GetProductEndpoint()
+# Nenhuma instanciação necessária — definir a classe registra a rota automaticamente.
 ```
 
-**`urls/__init__.py`**
+**`urls/__init__.py`** — gerado pelo CLI, nunca mais editado
 ```python
-from urls import get_product
+import importlib
+import pkgutil
+
+for _info in pkgutil.iter_modules(__path__):
+    importlib.import_module(f"{__name__}.{_info.name}")
 ```
 
 **`main.py`**
 ```python
 from pythia import Server
-import urls
+import urls   # dispara urls/__init__.py → importa todos os módulos → registra todos os endpoints
 
 server = Server.get_instance()
 

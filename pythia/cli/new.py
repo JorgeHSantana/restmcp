@@ -39,11 +39,11 @@ dependencies = [
 @click.command()
 @click.argument("name")
 def new_command(name: str):
-    """Cria um novo MCP server com a estrutura pythia."""
+    """Create a new MCP server with the pythia structure."""
     base = os.path.join(os.getcwd(), name)
 
     if os.path.exists(base):
-        click.echo(f"Erro: diretório '{name}' já existe.", err=True)
+        click.echo(f"Error: directory '{name}' already exists.", err=True)
         raise SystemExit(1)
 
     os.makedirs(base)
@@ -61,5 +61,5 @@ def new_command(name: str):
     with open(os.path.join(base, "pyproject.toml"), "w") as f:
         f.write(PYPROJECT.format(name=name))
 
-    click.echo(f"Projeto '{name}' criado com sucesso.")
+    click.echo(f"Project '{name}' created successfully.")
     click.echo(f"  cd {name} && pip install -e . && python main.py")

@@ -199,7 +199,7 @@ result = GetProductDetailsService(
 
 ### `Endpoint`
 
-HTTP route that auto-registers on the `Server` singleton when instantiated. Validates parameters, delegates to the callback, and returns a standardized JSON response.
+HTTP route that auto-registers on the `Server` singleton the moment the class is defined. Validates parameters, delegates to the callback, and returns a standardized JSON response.
 
 **Rules:**
 - The class name must end with `Endpoint`.
@@ -227,6 +227,35 @@ class GetProductEndpoint(Endpoint):
 
     def callback(self, product_id: str) -> dict:
         return GetProductDetailsService().execute(product_id)
+```
+
+No instantiation needed — **defining the class is enough**. As soon as Python processes the `class` body, the route is registered on the server.
+
+**Disabling an endpoint:**
+
+```python
+class GetProductEndpoint(Endpoint):
+    disabled = True   # skips auto-registration
+    ...
+```
+
+Set `disabled = True` to temporarily deactivate an endpoint without deleting the code. It can still be instantiated manually.
+
+**Abstract base classes** (missing `url`, `method`, `mcp_definition`, or `callback`) are never auto-registered:
+
+```python
+class BaseAuthEndpoint(Endpoint):
+    method = "POST"
+
+    def callback(self, **kwargs):
+        # shared auth logic
+        ...
+# ↑ Not registered — url and mcp_definition are missing
+
+class GetUserEndpoint(BaseAuthEndpoint):
+    mcp_definition = { ... }
+    url = "/api/get-user"
+    # ↑ Registered automatically — all required attributes present
 ```
 
 **Success response:**
@@ -258,7 +287,7 @@ Flask singleton with dual-mode: direct HTTP or MCP protocol via FastMCP.
 
 ```python
 from pythia import Server
-import urls  # importing urls/ triggers Endpoint __init__ and auto-registers all routes
+import urls  # runs urls/__init__.py → imports all endpoint modules → auto-registers all routes
 
 server = Server.get_instance()
 
@@ -284,7 +313,7 @@ mcp = server.get_mcp()
 AUTH_API_KEY=my-secret-key python main.py
 ```
 
-All routes (except `/health` and `/mcp/tools`) require `Authorization: Bearer <key>`. Multiple keys are supported, separated by commas.
+All routes (except `/health` and `/mcp/tools`) require `Authorization: Bearer <key>`. Multiple keys are supported, comma-separated.
 
 ---
 
@@ -351,8 +380,8 @@ my-server/
 ├── services/
 │   └── product.py          # GetProductService
 ├── urls/
-│   ├── __init__.py         # imports get_product module
-│   └── get_product.py      # GetProductEndpoint
+│   ├── __init__.py         # auto-scans urls/ — never edit this file
+│   └── get_product.py      # GetProductEndpoint — auto-registered on import
 └── main.py
 ```
 
@@ -431,18 +460,22 @@ class GetProductEndpoint(Endpoint):
     def callback(self, product_id: str) -> dict:
         return GetProductService().execute(product_id)
 
-GetProductEndpoint()
+# No instantiation needed — defining the class registers the route automatically.
 ```
 
-**`urls/__init__.py`**
+**`urls/__init__.py`** — generated once by the CLI, never edited again
 ```python
-from urls import get_product
+import importlib
+import pkgutil
+
+for _info in pkgutil.iter_modules(__path__):
+    importlib.import_module(f"{__name__}.{_info.name}")
 ```
 
 **`main.py`**
 ```python
 from pythia import Server
-import urls
+import urls   # triggers urls/__init__.py → imports all modules → registers all endpoints
 
 server = Server.get_instance()
 

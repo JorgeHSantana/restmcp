@@ -198,7 +198,7 @@ result = GetProductDetailsService(
 
 ### `Endpoint`
 
-Ruta HTTP que se auto-registra en el singleton `Server` al instanciarse. Valida parámetros, delega al callback y retorna JSON estandarizado.
+Ruta HTTP que se auto-registra en el singleton `Server` en el momento en que se define la clase. Valida parámetros, delega al callback y retorna JSON estandarizado.
 
 **Reglas:**
 - El nombre de la clase debe terminar con `Endpoint`.
@@ -226,6 +226,35 @@ class GetProductEndpoint(Endpoint):
 
     def callback(self, product_id: str) -> dict:
         return GetProductDetailsService().execute(product_id)
+```
+
+No es necesario instanciar — **definir la clase es suficiente**. En cuanto Python procesa el cuerpo de la `class`, la ruta queda registrada en el servidor.
+
+**Deshabilitar un endpoint:**
+
+```python
+class GetProductEndpoint(Endpoint):
+    disabled = True   # omite el auto-registro
+    ...
+```
+
+Usa `disabled = True` para desactivar temporalmente un endpoint sin borrar el código. Puede seguir instanciándose manualmente si es necesario.
+
+**Clases base abstractas** (sin `url`, `method`, `mcp_definition` o `callback`) nunca se auto-registran:
+
+```python
+class BaseAuthEndpoint(Endpoint):
+    method = "POST"
+
+    def callback(self, **kwargs):
+        # lógica de autenticación compartida
+        ...
+# ↑ No registrada — faltan url y mcp_definition
+
+class GetUserEndpoint(BaseAuthEndpoint):
+    mcp_definition = { ... }
+    url = "/api/get-user"
+    # ↑ Registrada automáticamente — todos los atributos requeridos presentes
 ```
 
 **Respuesta exitosa:**
@@ -257,7 +286,7 @@ Singleton Flask con dual-mode: HTTP directo o protocolo MCP vía FastMCP.
 
 ```python
 from pythia import Server
-import urls  # importar urls/ dispara el __init__ de los Endpoints y registra todas las rutas
+import urls   # ejecuta urls/__init__.py → importa todos los módulos → registra todas las rutas
 
 server = Server.get_instance()
 
@@ -350,8 +379,8 @@ mi-servidor/
 ├── services/
 │   └── product.py          # GetProductService
 ├── urls/
-│   ├── __init__.py         # importa el módulo get_product
-│   └── get_product.py      # GetProductEndpoint
+│   ├── __init__.py         # auto-scan de urls/ — nunca editar
+│   └── get_product.py      # GetProductEndpoint — auto-registrada al importar
 └── main.py
 ```
 
@@ -430,18 +459,22 @@ class GetProductEndpoint(Endpoint):
     def callback(self, product_id: str) -> dict:
         return GetProductService().execute(product_id)
 
-GetProductEndpoint()
+# No es necesario instanciar — definir la clase registra la ruta automáticamente.
 ```
 
-**`urls/__init__.py`**
+**`urls/__init__.py`** — generado por el CLI, nunca se vuelve a editar
 ```python
-from urls import get_product
+import importlib
+import pkgutil
+
+for _info in pkgutil.iter_modules(__path__):
+    importlib.import_module(f"{__name__}.{_info.name}")
 ```
 
 **`main.py`**
 ```python
 from pythia import Server
-import urls
+import urls   # dispara urls/__init__.py → importa todos los módulos → registra todos los endpoints
 
 server = Server.get_instance()
 
