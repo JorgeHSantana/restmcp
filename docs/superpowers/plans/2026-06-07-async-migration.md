@@ -839,3 +839,118 @@ Expected: no output.
 git add -u
 git commit -m "chore: verify async migration complete — flask fully removed"
 ```
+
+---
+
+### Task 7: Update documentation
+
+**Files:**
+- Modify: `README.md`, `README.pt.md`, `README.es.md`
+
+- [ ] **Step 1: Update all three READMEs**
+
+In each README, find and apply these changes:
+
+1. **Dependencies section** — replace `flask`, `flask-cors` with `fastapi`, `uvicorn`:
+
+```
+# before
+pip install flask flask-cors fastmcp pydantic
+
+# after
+pip install fastapi uvicorn fastmcp pydantic
+```
+
+2. **Server startup** — replace `server.start()` description to mention uvicorn/ASGI:
+
+```
+# before
+server.start()  # Flask dev server
+
+# after
+server.start()  # uvicorn ASGI server
+```
+
+3. **Async support section** — add after the existing "Testing with injection" section:
+
+**English (README.md):**
+```markdown
+## Async support
+
+`callback` can be either sync or async — pythia detects and handles both:
+
+\`\`\`python
+# sync — runs in a thread pool, does not block the event loop
+def callback(self, item_id: str):
+    return requests.get(f"https://api.example.com/items/{item_id}").json()
+
+# async — awaited directly
+async def callback(self, item_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.example.com/items/{item_id}")
+        return response.json()
+\`\`\`
+
+Use sync callbacks for simple cases. Migrate to async when you need concurrent I/O within a single request (e.g., calling multiple APIs in parallel with `asyncio.gather`).
+```
+
+**Portuguese (README.pt.md):**
+```markdown
+## Suporte a async
+
+`callback` pode ser sync ou async — o pythia detecta e trata ambos:
+
+\`\`\`python
+# sync — executa em thread pool, não bloqueia o event loop
+def callback(self, item_id: str):
+    return requests.get(f"https://api.exemplo.com/items/{item_id}").json()
+
+# async — aguardado diretamente
+async def callback(self, item_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.exemplo.com/items/{item_id}")
+        return response.json()
+\`\`\`
+
+Use callbacks sync para casos simples. Migre para async quando precisar de I/O concorrente dentro de uma única requisição (ex: chamar múltiplas APIs em paralelo com `asyncio.gather`).
+```
+
+**Spanish (README.es.md):**
+```markdown
+## Soporte async
+
+`callback` puede ser sync o async — pythia detecta y maneja ambos:
+
+\`\`\`python
+# sync — se ejecuta en thread pool, no bloquea el event loop
+def callback(self, item_id: str):
+    return requests.get(f"https://api.ejemplo.com/items/{item_id}").json()
+
+# async — se awaita directamente
+async def callback(self, item_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.ejemplo.com/items/{item_id}")
+        return response.json()
+\`\`\`
+
+Usa callbacks sync para casos simples. Migra a async cuando necesites I/O concurrente dentro de una única solicitud (ej: llamar múltiples APIs en paralelo con `asyncio.gather`).
+```
+
+4. **URL path syntax note** — add a note near the `url` attribute documentation:
+
+```
+# FastAPI path syntax (replaces Flask's <type:param>)
+url = "/clients/{client_id}"   # ✓
+url = "/clients/<int:client_id>"  # ✗ Flask syntax — does not work
+```
+
+- [ ] **Step 2: Verify the three READMEs are consistent with each other**
+
+Check that the async section exists in all three files and the deps listed match.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md README.pt.md README.es.md
+git commit -m "docs: add async support section + update deps (Flask → FastAPI) in all READMEs"
+```
