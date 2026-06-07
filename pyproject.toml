@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pythia"
+version = "0.1.0"
+description = "Framework Python para construção de MCP servers"
+requires-python = ">=3.11"
+dependencies = [
+    "flask",
+    "flask-cors",
+    "fastmcp",
+    "pydantic",
+    "click",
+]
+
+[project.scripts]
+pythia = "pythia.cli:app"
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
