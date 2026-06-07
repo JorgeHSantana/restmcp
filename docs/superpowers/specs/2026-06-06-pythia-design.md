@@ -42,14 +42,14 @@ E ter toda a infraestrutura pronta, bastando implementar as camadas de negócio.
 ```
 pythia/
 ├── pythia/
-│   ├── __init__.py       # exports: Endpoint, Server, Repository, DataSource, Entity
+│   ├── __init__.py       # exports: Endpoint, Server, Repository, DataSource, Entity, Logger, ValidationError, NotFoundError
 │   ├── server.py         # Server singleton — Flask + FastMCP dual-mode
 │   ├── endpoint.py       # Endpoint ABC — auto-registro + sufixo forçado
 │   ├── repository.py     # Repository ABC — sufixo forçado
 │   ├── datasource.py     # DataSource ABC — sufixo forçado
 │   ├── entity.py         # Entity (Pydantic BaseModel) — sufixo forçado
 │   ├── exceptions.py     # PythiaException, ValidationError, NotFoundError
-│   ├── logging.py        # get_logger() — stdlib logging configurado
+│   ├── logging.py        # Logger — stdlib logging configurado
 │   └── cli/
 │       ├── __init__.py
 │       └── new.py        # pythia new <nome>
@@ -191,9 +191,9 @@ O `Server` traduz automaticamente os `Endpoint`s registrados para ferramentas Fa
 ## Logging
 
 ```python
-from pythia.logging import get_logger
+from pythia import Logger
 
-logger = get_logger(__name__)
+logger = Logger(__name__)
 logger.info("Iniciando servidor...")
 ```
 
@@ -206,10 +206,21 @@ logger.info("Iniciando servidor...")
 
 ## Exceptions
 
+Importadas direto de `pythia` — sem submódulo:
+
+```python
+from pythia import ValidationError, NotFoundError
+
+raise ValidationError("client_id é obrigatório")
+raise NotFoundError("Cliente não encontrado")
 ```
-PythiaException          # base
-├── ValidationError      # parâmetros inválidos (400)
-└── NotFoundError        # recurso não encontrado (404)
+
+Hierarquia interna:
+
+```
+PythiaException          # base (não exposta diretamente)
+├── ValidationError      # 400 — parâmetros inválidos
+└── NotFoundError        # 404 — recurso não encontrado
 ```
 
 Capturadas automaticamente pelo `Endpoint._callback` e convertidas em respostas JSON padronizadas.
