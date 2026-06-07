@@ -7,12 +7,14 @@ name = "pythia"
 version = "0.1.0"
 description = "Framework Python para construção de MCP servers"
 requires-python = ">=3.11"
+authors = [{ name = "pythia" }]
+license = { text = "MIT" }
 dependencies = [
-    "flask",
-    "flask-cors",
-    "fastmcp",
-    "pydantic",
-    "click",
+    "flask>=2.0",
+    "flask-cors>=4.0",
+    "fastmcp>=2.0",
+    "pydantic>=2.0",
+    "click>=8.0",
 ]
 
 [project.scripts]
