@@ -6,6 +6,6 @@ class Entity(BaseModel):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Entity"):
             raise TypeError(
-                f"Subclasses de Entity devem terminar com 'Entity' "
-                f"(encontrado: '{cls.__name__}'). Renomeie para '{cls.__name__}Entity'."
+                f"Entity subclasses must end with 'Entity' "
+                f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Entity'."
             )

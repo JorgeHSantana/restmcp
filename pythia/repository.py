@@ -1,4 +1,6 @@
+import copy
 from abc import ABC, abstractmethod
+
 from pythia.datasource import DataSource
 
 
@@ -7,18 +9,24 @@ class Repository(ABC):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Repository"):
             raise TypeError(
-                f"Subclasses de Repository devem terminar com 'Repository' "
-                f"(encontrado: '{cls.__name__}'). Renomeie para '{cls.__name__}Repository'."
+                f"Repository subclasses must end with 'Repository' "
+                f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Repository'."
             )
 
-    def __init__(self):
-        data_bank = getattr(self, "data_bank", None)
-        if not data_bank:
-            raise ValueError(f"{self.__class__.__name__}: data_bank is required")
-        if not isinstance(data_bank, DataSource):
+    def __init__(self, data_source: DataSource = None):
+        if data_source is not None:
+            resolved = data_source
+        else:
+            default = getattr(type(self), "data_source", None)
+            resolved = copy.copy(default)
+
+        if not resolved:
+            raise ValueError(f"{self.__class__.__name__}: data_source is required")
+        if not isinstance(resolved, DataSource):
             raise ValueError(
-                f"{self.__class__.__name__}: data_bank must be a DataSource instance"
+                f"{self.__class__.__name__}: data_source must be a DataSource instance"
             )
+        self.data_source = resolved
 
     @abstractmethod
     def get(self, **kwargs):

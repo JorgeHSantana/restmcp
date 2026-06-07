@@ -11,8 +11,8 @@ class Endpoint(ABC):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Endpoint"):
             raise TypeError(
-                f"Subclasses de Endpoint devem terminar com 'Endpoint' "
-                f"(encontrado: '{cls.__name__}'). Renomeie para '{cls.__name__}Endpoint'."
+                f"Endpoint subclasses must end with 'Endpoint' "
+                f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Endpoint'."
             )
 
     def _callback(self, **kwargs):

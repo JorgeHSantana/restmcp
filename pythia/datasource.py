@@ -6,8 +6,8 @@ class DataSource(ABC):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("DataSource"):
             raise TypeError(
-                f"Subclasses de DataSource devem terminar com 'DataSource' "
-                f"(encontrado: '{cls.__name__}'). Renomeie para '{cls.__name__}DataSource'."
+                f"DataSource subclasses must end with 'DataSource' "
+                f"(got: '{cls.__name__}'). Rename to '{cls.__name__}DataSource'."
             )
 
     def __new__(cls, *args, **kwargs):
