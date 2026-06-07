@@ -1,14 +1,14 @@
 # pythia
 
-Python framework for building MCP servers with a layered architecture.
+Framework Python para construir servidores MCP con arquitectura en capas.
 
-Pythia standardizes the MCP server pattern into reusable base classes and a scaffolding CLI, so you can focus on business logic instead of boilerplate.
+Pythia estandariza el patrón de MCP server en clases base reutilizables y una CLI de scaffolding, para que te concentres en la lógica de negocio en vez del boilerplate.
 
-> The name comes from the Pythia — the Oracle of Delphi. MCP servers are oracles: they answer AI clients' questions with structured data.
+> El nombre viene de la Pitia — el oráculo de Delfos. Los MCP servers son oráculos: responden preguntas de AI clients con datos estructurados.
 
 ---
 
-## Installation
+## Instalación
 
 ```bash
 pip install pythia
@@ -16,52 +16,51 @@ pip install pythia
 
 ---
 
-## Quick start
+## Inicio rápido
 
 ```bash
-pythia new my-server
+pythia new mi-servidor
 
-cd my-server
+cd mi-servidor
 pip install -e .
 python main.py
 ```
 
-Generated structure:
+Estructura generada:
 
 ```
-my-server/
-├── datasource/        # external connections (APIs, databases)
-├── models/            # domain entities (Pydantic)
-├── repositories/      # data access layer
-├── services/          # business logic
-├── tools/             # internal utilities
-├── urls/              # endpoint definitions (auto-discovery)
+mi-servidor/
+├── datasource/        # conexiones externas (APIs, bases de datos)
+├── models/            # entidades de dominio (Pydantic)
+├── repositories/      # capa de acceso a datos
+├── services/          # lógica de negocio
+├── tools/             # utilitarios internos
+├── urls/              # definición de endpoints (auto-discovery)
 ├── main.py
 └── pyproject.toml
 ```
 
 ---
 
-## Architecture
+## Arquitectura
 
 ```
 Endpoint  →  Service  →  Repository  →  DataSource
    ↑              ↑            ↑              ↑
-HTTP route    business      data          connection
-              logic         access
+ruta HTTP     negocio       acceso        conexión
 ```
 
-Each layer knows only the layer directly below it. The `Server` singleton wires everything together.
+Cada capa conoce únicamente la capa directamente inferior. El singleton `Server` conecta todo.
 
 ---
 
-## Base classes
+## Clases base
 
 ### `DataSource`
 
-Abstracts the connection to an external data source (REST API, database, file, etc.).
+Abstrae la conexión con una fuente de datos externa (API REST, base de datos, archivo, etc.).
 
-**Rule:** the class name must end with `DataSource`.
+**Regla:** el nombre de la clase debe terminar con `DataSource`.
 
 ```python
 import os
@@ -83,15 +82,15 @@ class ProductApiDataSource(DataSource):
         return response.json()
 ```
 
-> **Thread safety** is the DataSource's responsibility. HTTP clients and connection pools (SQLAlchemy, pymongo) are thread-safe by design — sharing them across instances via `copy.copy` is correct and expected.
+> **Thread safety** es responsabilidad del DataSource. Los clientes HTTP y los connection pools (SQLAlchemy, pymongo) son thread-safe por diseño — compartirlos entre instancias vía `copy.copy` es correcto y esperado.
 
 ---
 
 ### `Entity`
 
-Structured domain data. Backed by Pydantic `BaseModel` — automatic type validation.
+Dato estructurado del dominio. Respaldado por Pydantic `BaseModel` — validación automática de tipos.
 
-**Rule:** the class name must end with `Entity`.
+**Regla:** el nombre de la clase debe terminar con `Entity`.
 
 ```python
 from pythia import Entity
@@ -118,12 +117,12 @@ print(product.model_dump())
 
 ### `Repository`
 
-Fetches data via a `DataSource` and returns `Entity` objects. One responsibility per Repository: one source, one data type.
+Accede a datos vía `DataSource` y retorna objetos `Entity`. Una responsabilidad por Repository: una fuente, un tipo de dato.
 
-**Rules:**
-- The class name must end with `Repository`.
-- Must declare `data_source` as a class attribute (a `DataSource` instance).
-- Must implement `get(**kwargs)`.
+**Reglas:**
+- El nombre de la clase debe terminar con `Repository`.
+- Debe declarar `data_source` como atributo de clase (instancia de `DataSource`).
+- Debe implementar `get(**kwargs)`.
 
 ```python
 from pythia import Repository
@@ -138,32 +137,32 @@ class ProductRepository(Repository):
         return ProductEntity(**raw)
 ```
 
-**Dependency injection for tests:**
+**Inyección de dependencias para tests:**
 
 ```python
-# Production — uses the real DataSource
+# Producción — usa el DataSource real
 repo = ProductRepository()
 
-# Test — swap the DataSource without changing the class
+# Test — reemplaza el DataSource sin modificar la clase
 repo = ProductRepository(data_source=MockDataSource())
 ```
 
-The injection works because `Repository.__init__` accepts an optional `data_source`. If not provided, it uses `copy.copy()` of the class attribute — ensuring isolation between instances.
+La inyección funciona porque `Repository.__init__` acepta `data_source` opcional. Si no se provee, usa `copy.copy()` del atributo de clase — garantizando aislamiento entre instancias.
 
 ---
 
 ### `Service`
 
-Orchestrates business logic. This is where joins, transformations, and rules that involve more than one data source happen.
+Orquesta la lógica de negocio. Aquí ocurren los joins, transformaciones y reglas que involucran más de una fuente de datos.
 
-**Rules:**
-- The class name must end with `Service`.
-- Class attributes of type `Repository` are auto-discovered and isolated per instance via `copy.copy`.
-- Accepts repository overrides via `**kwargs` in the constructor.
+**Reglas:**
+- El nombre de la clase debe terminar con `Service`.
+- Atributos de clase del tipo `Repository` son descubiertos automáticamente y aislados por instancia vía `copy.copy`.
+- Acepta overrides de repositories vía `**kwargs` en el constructor.
 
 ```python
 from pythia import Service
-from repositories.product import ProductRepository
+from repositories.product   import ProductRepository
 from repositories.inventory import InventoryRepository
 
 class GetProductDetailsService(Service):
@@ -176,34 +175,34 @@ class GetProductDetailsService(Service):
 
         return {
             **product.model_dump(),
-            "stock":      inventory.quantity,
-            "available":  inventory.quantity > 0,
+            "stock":     inventory.quantity,
+            "available": inventory.quantity > 0,
         }
 ```
 
-**Dependency injection for tests:**
+**Inyección de dependencias para tests:**
 
 ```python
-# Production
+# Producción
 result = GetProductDetailsService().execute(product_id="1")
 
-# Test — swap only the inventory repository
+# Test — reemplaza solo el repository de inventario
 result = GetProductDetailsService(
     inventory_repo=MockInventoryRepository()
 ).execute(product_id="1")
 ```
 
-> **Joining data from two databases?** Do it in the `Service`. Each `Repository` accesses a single `DataSource`. The `Service` calls both and merges the data in Python.
+> **¿Join de dos bases de datos?** Hazlo en el `Service`. Cada `Repository` accede a un único `DataSource`. El `Service` llama a ambos y une los datos en Python.
 
 ---
 
 ### `Endpoint`
 
-HTTP route that auto-registers on the `Server` singleton when instantiated. Validates parameters, delegates to the callback, and returns a standardized JSON response.
+Ruta HTTP que se auto-registra en el singleton `Server` al instanciarse. Valida parámetros, delega al callback y retorna JSON estandarizado.
 
-**Rules:**
-- The class name must end with `Endpoint`.
-- Must declare `mcp_definition`, `url`, `method`, and `callback`.
+**Reglas:**
+- El nombre de la clase debe terminar con `Endpoint`.
+- Debe declarar `mcp_definition`, `url`, `method` y `callback`.
 
 ```python
 from pythia import Endpoint
@@ -212,12 +211,12 @@ from services.product import GetProductDetailsService
 class GetProductEndpoint(Endpoint):
     mcp_definition = {
         "name":        "get_product",
-        "description": "Returns product details by ID",
+        "description": "Retorna detalles de un producto por ID",
         "parameters": {
             "properties": {
                 "product_id": {
                     "type":        "string",
-                    "description": "Product ID",
+                    "description": "ID del producto",
                 },
             },
         },
@@ -229,7 +228,7 @@ class GetProductEndpoint(Endpoint):
         return GetProductDetailsService().execute(product_id)
 ```
 
-**Success response:**
+**Respuesta exitosa:**
 
 ```json
 {
@@ -239,12 +238,12 @@ class GetProductEndpoint(Endpoint):
 }
 ```
 
-**Error response (`ValidationError` → 400, `NotFoundError` → 404):**
+**Respuesta de error (`ValidationError` → 400, `NotFoundError` → 404):**
 
 ```json
 {
   "tool":       "get_product",
-  "error":      "product_id is required",
+  "error":      "product_id es requerido",
   "error_type": "ValidationError",
   "success":    false
 }
@@ -254,11 +253,11 @@ class GetProductEndpoint(Endpoint):
 
 ### `Server`
 
-Flask singleton with dual-mode: direct HTTP or MCP protocol via FastMCP.
+Singleton Flask con dual-mode: HTTP directo o protocolo MCP vía FastMCP.
 
 ```python
 from pythia import Server
-import urls  # importing urls/ triggers Endpoint __init__ and auto-registers all routes
+import urls  # importar urls/ dispara el __init__ de los Endpoints y registra todas las rutas
 
 server = Server.get_instance()
 
@@ -267,49 +266,49 @@ if __name__ == "__main__":
 ```
 
 ```python
-# MCP mode (for AI clients)
+# Modo MCP (para AI clients)
 mcp = server.get_mcp()
 ```
 
-**Built-in routes:**
+**Rutas por defecto:**
 
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/health` | GET | Server status |
-| `/mcp/tools` | GET | Lists all registered tools |
+| Ruta | Método | Descripción |
+|------|--------|-------------|
+| `/health` | GET | Estado del servidor |
+| `/mcp/tools` | GET | Lista todas las herramientas registradas |
 
-**Authentication via environment variable:**
+**Autenticación vía variable de entorno:**
 
 ```bash
-AUTH_API_KEY=my-secret-key python main.py
+AUTH_API_KEY=mi-clave-secreta python main.py
 ```
 
-All routes (except `/health` and `/mcp/tools`) require `Authorization: Bearer <key>`. Multiple keys are supported, separated by commas.
+Todas las rutas (excepto `/health` y `/mcp/tools`) requieren `Authorization: Bearer <clave>`. Se soportan múltiples claves separadas por coma.
 
 ---
 
 ### `Logger`
 
-Wrapper over Python's standard `logging` with consistent formatting.
+Wrapper sobre el `logging` estándar de Python con formato consistente.
 
 ```python
 from pythia import Logger
 
 logger = Logger(__name__)
 
-logger.info("Server started")
-logger.warning("Slow response: %.2fs", elapsed)
-logger.error("Connection failed: %s", err)
-logger.debug("Received payload: %s", payload)
+logger.info("Servidor iniciado")
+logger.warning("Respuesta lenta: %.2fs", elapsed)
+logger.error("Fallo de conexión: %s", err)
+logger.debug("Payload recibido: %s", payload)
 ```
 
-Output:
+Salida:
 
 ```
-[2026-06-07 10:30:00] INFO datasource.product_api — Server started
+[2026-06-07 10:30:00] INFO datasource.product_api — Servidor iniciado
 ```
 
-**Log level via environment variable:**
+**Nivel de log vía variable de entorno:**
 
 ```bash
 LOG_LEVEL=DEBUG python main.py   # DEBUG | INFO | WARNING | ERROR
@@ -319,29 +318,29 @@ LOG_LEVEL=DEBUG python main.py   # DEBUG | INFO | WARNING | ERROR
 
 ### Exceptions
 
-Imported directly from `pythia`. `Endpoint` catches them automatically and converts to HTTP responses.
+Importadas directamente desde `pythia`. El `Endpoint` las captura automáticamente y las convierte en respuesta HTTP.
 
 ```python
 from pythia import ValidationError, NotFoundError
 
-raise ValidationError("product_id is required")   # → HTTP 400
-raise NotFoundError("Product not found")           # → HTTP 404
+raise ValidationError("product_id es requerido")   # → HTTP 400
+raise NotFoundError("Producto no encontrado")        # → HTTP 404
 ```
 
-Hierarchy:
+Jerarquía:
 
 ```
-PythiaException          # base (not exposed directly)
+PythiaException          # base (no expuesta directamente)
 ├── ValidationError      # → HTTP 400
 └── NotFoundError        # → HTTP 404
 ```
 
 ---
 
-## Full example
+## Ejemplo completo
 
 ```
-my-server/
+mi-servidor/
 ├── datasource/
 │   └── product_api.py      # ProductApiDataSource
 ├── models/
@@ -351,7 +350,7 @@ my-server/
 ├── services/
 │   └── product.py          # GetProductService
 ├── urls/
-│   ├── __init__.py         # imports get_product module
+│   ├── __init__.py         # importa el módulo get_product
 │   └── get_product.py      # GetProductEndpoint
 └── main.py
 ```
@@ -406,7 +405,7 @@ class GetProductService(Service):
     def execute(self, product_id: str) -> dict:
         product = self.repo.get(product_id=product_id)
         if not product:
-            raise NotFoundError(f"Product {product_id} not found")
+            raise NotFoundError(f"Producto {product_id} no encontrado")
         return product.model_dump()
 ```
 
@@ -418,10 +417,10 @@ from services.product import GetProductService
 class GetProductEndpoint(Endpoint):
     mcp_definition = {
         "name":        "get_product",
-        "description": "Returns a product by ID",
+        "description": "Retorna un producto por ID",
         "parameters": {
             "properties": {
-                "product_id": {"type": "string", "description": "Product ID"},
+                "product_id": {"type": "string", "description": "ID del producto"},
             },
         },
     }
@@ -452,7 +451,7 @@ if __name__ == "__main__":
 
 ---
 
-## Testing with injection
+## Tests con inyección
 
 ```python
 # tests/test_get_product.py
@@ -462,34 +461,34 @@ from pythia import DataSource
 
 class FakeProductApiDataSource(DataSource):
     def fetch(self, product_id: str) -> dict:
-        return {"id": product_id, "name": "Test Widget", "price": 1.99}
+        return {"id": product_id, "name": "Widget de Prueba", "price": 1.99}
 
 class FakeProductRepository(ProductRepository):
     data_source = FakeProductApiDataSource()
 
-def test_get_product_returns_correct_data():
+def test_get_product_retorna_datos_correctos():
     svc = GetProductService(repo=FakeProductRepository())
     result = svc.execute(product_id="1")
-    assert result["name"] == "Test Widget"
+    assert result["name"] == "Widget de Prueba"
 ```
 
 ---
 
-## Environment variables
+## Variables de entorno
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AUTH_API_KEY` | _(disabled)_ | Bearer key for authentication. Multiple keys supported, comma-separated. |
-| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| Variable | Valor por defecto | Descripción |
+|----------|------------------|-------------|
+| `AUTH_API_KEY` | _(desactivado)_ | Clave Bearer para autenticación. Múltiples claves separadas por coma. |
+| `LOG_LEVEL` | `INFO` | Nivel de log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 ---
 
-## Naming conventions
+## Convención de nomenclatura
 
-All base classes enforce a suffix. Violating it raises `TypeError` at import time:
+Todas las clases base exigen sufijo. Violarlo lanza `TypeError` en tiempo de import:
 
-| Base class | Required suffix | Example |
-|------------|----------------|---------|
+| Clase base | Sufijo requerido | Ejemplo |
+|------------|-----------------|---------|
 | `DataSource` | `*DataSource` | `ProductApiDataSource` |
 | `Entity` | `*Entity` | `ProductEntity` |
 | `Repository` | `*Repository` | `ProductRepository` |
@@ -498,7 +497,7 @@ All base classes enforce a suffix. Violating it raises `TypeError` at import tim
 
 ---
 
-## Dependencies
+## Dependencias
 
 ```toml
 flask >= 2.0
