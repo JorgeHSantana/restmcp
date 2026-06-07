@@ -1,7 +1,10 @@
 import pytest
+from pythia.datasource import DataSource
 from pythia.endpoint import Endpoint
+from pythia.exceptions import NotFoundError, ValidationError
+from pythia.repository import Repository
 from pythia.server import Server
-from pythia.exceptions import ValidationError, NotFoundError
+from pythia.service import Service
 
 
 def make_endpoint():
@@ -153,3 +156,101 @@ def test_endpoint_callback_internal_error():
     response = client.post("/api/boom", json={})
     assert response.status_code == 500
     assert response.get_json()["error_type"] == "InternalServerError"
+
+
+# --- Full-stack injection: Endpoint → Service → Repository → DataSource ---
+
+class _FakeDataSource(DataSource):
+    def __init__(self, records: dict):
+        self._records = records
+
+
+class _ItemRepository(Repository):
+    data_source = _FakeDataSource({"1": "Real Item"})
+
+    def get(self, item_id: str):
+        return self.data_source._records.get(item_id)
+
+
+class _GetItemService(Service):
+    repo = _ItemRepository()
+
+    def execute(self, item_id: str):
+        result = self.repo.get(item_id=item_id)
+        if result is None:
+            raise NotFoundError(f"Item {item_id} not found")
+        return {"id": item_id, "name": result}
+
+
+def test_endpoint_uses_service_with_real_repository():
+    class FullStackEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "fullstack_tool",
+            "description": "full stack",
+            "parameters": {"properties": {"item_id": {"type": "string"}}},
+        }
+        url = "/api/fullstack"
+        method = "POST"
+
+        def callback(self, item_id: str):
+            return _GetItemService().execute(item_id)
+
+    FullStackEndpoint()
+    client = Server.get_instance().app.test_client()
+    response = client.post("/api/fullstack", json={"item_id": "1"})
+    assert response.status_code == 200
+    assert response.get_json()["result"]["name"] == "Real Item"
+
+
+def test_endpoint_uses_service_with_injected_mock_repository():
+    """Demonstrates per-test data injection without touching production DataSource."""
+
+    class MockItemRepository(Repository):
+        data_source = _FakeDataSource({"99": "Mock Item"})
+
+        def get(self, item_id: str):
+            return self.data_source._records.get(item_id)
+
+    class FullStackMockEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "fullstack_mock_tool",
+            "description": "full stack mock",
+            "parameters": {"properties": {"item_id": {"type": "string"}}},
+        }
+        url = "/api/fullstack-mock"
+        method = "POST"
+
+        def callback(self, item_id: str):
+            return _GetItemService(repo=MockItemRepository()).execute(item_id)
+
+    FullStackMockEndpoint()
+    client = Server.get_instance().app.test_client()
+    response = client.post("/api/fullstack-mock", json={"item_id": "99"})
+    assert response.status_code == 200
+    assert response.get_json()["result"]["name"] == "Mock Item"
+
+
+def test_endpoint_service_not_found_propagates_as_404():
+    class NotFoundMockRepository(Repository):
+        data_source = _FakeDataSource({})
+
+        def get(self, **kwargs):
+            return None
+
+    class FullStackNotFoundEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "fullstack_notfound_tool",
+            "description": "full stack 404",
+            "parameters": {"properties": {"item_id": {"type": "string"}}},
+        }
+        url = "/api/fullstack-notfound"
+        method = "POST"
+
+        def callback(self, item_id: str):
+            return _GetItemService(repo=NotFoundMockRepository()).execute(item_id)
+
+    FullStackNotFoundEndpoint()
+    client = Server.get_instance().app.test_client()
+    response = client.post("/api/fullstack-notfound", json={"item_id": "missing"})
+    assert response.status_code == 404
+    assert response.get_json()["error_type"] == "NotFoundError"
