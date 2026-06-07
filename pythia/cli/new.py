@@ -14,9 +14,11 @@ if __name__ == "__main__":
 """
 
 URLS_INIT = """\
-# Auto-discovery: importe aqui cada módulo de endpoint
-# Exemplo:
-# from urls import get_client
+import importlib
+import pkgutil
+
+for _info in pkgutil.iter_modules(__path__):
+    importlib.import_module(f"{__name__}.{_info.name}")
 """
 
 PYPROJECT = """\

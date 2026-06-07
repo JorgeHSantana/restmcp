@@ -7,11 +7,13 @@ from pythia.server import Server
 from pythia.service import Service
 
 
-def make_endpoint():
+# --- helpers ---
+
+def _make_get_item_endpoint():
     class GetItemEndpoint(Endpoint):
         mcp_definition = {
             "name": "get_item",
-            "description": "Retorna um item",
+            "description": "Returns an item",
             "parameters": {"properties": {"item_id": {"type": "string"}}},
         }
         url = "/api/get-item"
@@ -20,8 +22,8 @@ def make_endpoint():
         def callback(self, item_id: str):
             return {"id": item_id, "name": "Test Item"}
 
-    return GetItemEndpoint()
 
+# --- suffix enforcement ---
 
 def test_endpoint_suffix_enforced():
     with pytest.raises(TypeError, match="Endpoint"):
@@ -32,30 +34,35 @@ def test_endpoint_suffix_enforced():
             def callback(self): pass
 
 
+# --- validation errors on missing attributes ---
+
 def test_endpoint_requires_mcp_definition():
+    class NoDefEndpoint(Endpoint):
+        url = "/x"
+        method = "POST"
+        def callback(self): pass
+
     with pytest.raises(ValueError, match="mcp_definition"):
-        class NoDefEndpoint(Endpoint):
-            url = "/x"
-            method = "POST"
-            def callback(self): pass
         NoDefEndpoint()
 
 
 def test_endpoint_requires_url():
+    class NoUrlEndpoint(Endpoint):
+        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+        method = "POST"
+        def callback(self): pass
+
     with pytest.raises(ValueError, match="url"):
-        class NoUrlEndpoint(Endpoint):
-            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-            method = "POST"
-            def callback(self): pass
         NoUrlEndpoint()
 
 
 def test_endpoint_requires_method():
+    class NoMethodEndpoint(Endpoint):
+        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+        url = "/x"
+        def callback(self): pass
+
     with pytest.raises(ValueError, match="method"):
-        class NoMethodEndpoint(Endpoint):
-            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-            url = "/x"
-            def callback(self): pass
         NoMethodEndpoint()
 
 
@@ -68,16 +75,72 @@ def test_endpoint_requires_callback():
         NoCallbackEndpoint()
 
 
+# --- auto-registration ---
+
+def test_endpoint_auto_registers_on_class_definition():
+    class AutoEndpoint(Endpoint):
+        mcp_definition = {"name": "auto_tool", "description": "auto", "parameters": {"properties": {}}}
+        url = "/api/auto"
+        method = "POST"
+        def callback(self): return {}
+
+    server = Server.get_instance()
+    assert any(h.mcp_definition["name"] == "auto_tool" for h in server.url_handlers)
+
+
 def test_endpoint_registers_on_server():
-    make_endpoint()
+    _make_get_item_endpoint()
     server = Server.get_instance()
     assert any(h.mcp_definition["name"] == "get_item" for h in server.url_handlers)
 
 
-def test_endpoint_callback_success():
-    make_endpoint()
+# --- disabled ---
+
+def test_endpoint_disabled_skips_registration():
+    class DisabledEndpoint(Endpoint):
+        disabled = True
+        mcp_definition = {"name": "disabled_tool", "description": "x", "parameters": {"properties": {}}}
+        url = "/api/disabled"
+        method = "POST"
+        def callback(self): return {}
+
     server = Server.get_instance()
-    client = server.app.test_client()
+    assert not any(h.mcp_definition["name"] == "disabled_tool" for h in server.url_handlers)
+
+
+def test_endpoint_disabled_can_be_instantiated_manually():
+    class ManualEndpoint(Endpoint):
+        disabled = True
+        mcp_definition = {"name": "manual_tool", "description": "x", "parameters": {"properties": {}}}
+        url = "/api/manual"
+        method = "POST"
+        def callback(self): return {}
+
+    ManualEndpoint()
+    server = Server.get_instance()
+    assert any(h.mcp_definition["name"] == "manual_tool" for h in server.url_handlers)
+
+
+# --- abstract base class (no auto-registration without required attrs) ---
+
+def test_abstract_base_endpoint_not_auto_registered():
+    class BaseCustomEndpoint(Endpoint):
+        method = "POST"
+        def callback(self, **kwargs): return {}
+
+    server = Server.get_instance()
+    # BaseCustomEndpoint has no url or mcp_definition — must not be registered
+    assert not any(
+        getattr(h, "__class__", None) is BaseCustomEndpoint
+        for h in server.url_handlers
+    )
+
+
+# --- HTTP callbacks ---
+
+def test_endpoint_callback_success():
+    _make_get_item_endpoint()
+    client = Server.get_instance().app.test_client()
     response = client.post("/api/get-item", json={"item_id": "42"})
     assert response.status_code == 200
     data = response.get_json()
@@ -86,9 +149,8 @@ def test_endpoint_callback_success():
 
 
 def test_endpoint_callback_invalid_param():
-    make_endpoint()
-    server = Server.get_instance()
-    client = server.app.test_client()
+    _make_get_item_endpoint()
+    client = Server.get_instance().app.test_client()
     response = client.post("/api/get-item", json={"unknown_param": "val"})
     assert response.status_code == 400
     data = response.get_json()
@@ -98,20 +160,13 @@ def test_endpoint_callback_invalid_param():
 
 def test_endpoint_callback_validation_error_from_callback():
     class RaisingEndpoint(Endpoint):
-        mcp_definition = {
-            "name": "raising_tool",
-            "description": "raises",
-            "parameters": {"properties": {}},
-        }
+        mcp_definition = {"name": "raising_tool", "description": "raises", "parameters": {"properties": {}}}
         url = "/api/raising"
         method = "POST"
-
         def callback(self):
-            raise ValidationError("algo inválido")
+            raise ValidationError("invalid input")
 
-    RaisingEndpoint()
-    server = Server.get_instance()
-    client = server.app.test_client()
+    client = Server.get_instance().app.test_client()
     response = client.post("/api/raising", json={})
     assert response.status_code == 400
     assert response.get_json()["success"] is False
@@ -119,40 +174,26 @@ def test_endpoint_callback_validation_error_from_callback():
 
 def test_endpoint_callback_not_found_error():
     class NotFoundEndpoint(Endpoint):
-        mcp_definition = {
-            "name": "notfound_tool",
-            "description": "404",
-            "parameters": {"properties": {}},
-        }
+        mcp_definition = {"name": "notfound_tool", "description": "404", "parameters": {"properties": {}}}
         url = "/api/notfound"
         method = "POST"
-
         def callback(self):
-            raise NotFoundError("não encontrado")
+            raise NotFoundError("not found")
 
-    NotFoundEndpoint()
-    server = Server.get_instance()
-    client = server.app.test_client()
+    client = Server.get_instance().app.test_client()
     response = client.post("/api/notfound", json={})
     assert response.status_code == 404
 
 
 def test_endpoint_callback_internal_error():
     class BoomEndpoint(Endpoint):
-        mcp_definition = {
-            "name": "boom_tool",
-            "description": "explode",
-            "parameters": {"properties": {}},
-        }
+        mcp_definition = {"name": "boom_tool", "description": "explode", "parameters": {"properties": {}}}
         url = "/api/boom"
         method = "POST"
-
         def callback(self):
-            raise RuntimeError("explosão inesperada")
+            raise RuntimeError("unexpected boom")
 
-    BoomEndpoint()
-    server = Server.get_instance()
-    client = server.app.test_client()
+    client = Server.get_instance().app.test_client()
     response = client.post("/api/boom", json={})
     assert response.status_code == 500
     assert response.get_json()["error_type"] == "InternalServerError"
@@ -195,7 +236,6 @@ def test_endpoint_uses_service_with_real_repository():
         def callback(self, item_id: str):
             return _GetItemService().execute(item_id)
 
-    FullStackEndpoint()
     client = Server.get_instance().app.test_client()
     response = client.post("/api/fullstack", json={"item_id": "1"})
     assert response.status_code == 200
@@ -203,8 +243,6 @@ def test_endpoint_uses_service_with_real_repository():
 
 
 def test_endpoint_uses_service_with_injected_mock_repository():
-    """Demonstrates per-test data injection without touching production DataSource."""
-
     class MockItemRepository(Repository):
         data_source = _FakeDataSource({"99": "Mock Item"})
 
@@ -223,7 +261,6 @@ def test_endpoint_uses_service_with_injected_mock_repository():
         def callback(self, item_id: str):
             return _GetItemService(repo=MockItemRepository()).execute(item_id)
 
-    FullStackMockEndpoint()
     client = Server.get_instance().app.test_client()
     response = client.post("/api/fullstack-mock", json={"item_id": "99"})
     assert response.status_code == 200
@@ -249,7 +286,6 @@ def test_endpoint_service_not_found_propagates_as_404():
         def callback(self, item_id: str):
             return _GetItemService(repo=NotFoundMockRepository()).execute(item_id)
 
-    FullStackNotFoundEndpoint()
     client = Server.get_instance().app.test_client()
     response = client.post("/api/fullstack-notfound", json={"item_id": "missing"})
     assert response.status_code == 404

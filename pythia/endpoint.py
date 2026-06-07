@@ -7,6 +7,8 @@ from pythia.exceptions import PythiaException, ValidationError
 
 
 class Endpoint(ABC):
+    disabled: bool = False
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Endpoint"):
@@ -14,6 +16,13 @@ class Endpoint(ABC):
                 f"Endpoint subclasses must end with 'Endpoint' "
                 f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Endpoint'."
             )
+
+        if getattr(cls, "disabled", False):
+            return
+
+        _required = ("url", "method", "mcp_definition", "callback")
+        if all(vars(cls).get(attr) for attr in _required):
+            cls()
 
     def _callback(self, **kwargs):
         try:
