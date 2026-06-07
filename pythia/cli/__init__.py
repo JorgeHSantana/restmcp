@@ -4,7 +4,7 @@ from pythia.cli.new import new_command
 
 @click.group()
 def app():
-    """pythia — framework para MCP servers."""
+    """pythia — framework for building MCP servers."""
     pass
 
 
