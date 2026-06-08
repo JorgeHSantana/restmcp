@@ -1,4 +1,5 @@
 import pytest
+from starlette.testclient import TestClient
 from pythia.server import Server
 
 
@@ -8,26 +9,26 @@ def test_server_is_singleton():
     assert s1 is s2
 
 
-def test_server_has_flask_app():
+def test_server_has_app():
     server = Server.get_instance()
     assert server.app is not None
 
 
 def test_health_endpoint_returns_200():
     server = Server.get_instance()
-    client = server.app.test_client()
+    client = TestClient(server.app)
     response = client.get("/health")
     assert response.status_code == 200
-    data = response.get_json()
+    data = response.json()
     assert data["status"] == "healthy"
 
 
 def test_mcp_tools_endpoint_returns_empty_list():
     server = Server.get_instance()
-    client = server.app.test_client()
+    client = TestClient(server.app)
     response = client.get("/mcp/tools")
     assert response.status_code == 200
-    data = response.get_json()
+    data = response.json()
     assert data["tools"] == []
 
 
@@ -57,9 +58,9 @@ def test_mcp_tools_lists_registered_handler():
         }
 
     server.register_url_handler(FakeHandler())
-    client = server.app.test_client()
+    client = TestClient(server.app)
     response = client.get("/mcp/tools")
-    tools = response.get_json()["tools"]
+    tools = response.json()["tools"]
     assert any(t["name"] == "my_tool" for t in tools)
 
 
