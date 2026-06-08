@@ -2,6 +2,8 @@ from pydantic import BaseModel
 
 
 class Entity(BaseModel):
+    """Pydantic model for data returned by a DataSource. Subclass names must end with 'Entity'."""
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Entity"):

@@ -33,6 +33,8 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
 
 
 class Endpoint(ABC):
+    """HTTP + MCP endpoint. Subclasses auto-register on class definition when url, method, mcp_definition, and callback are all set."""
+
     disabled: bool = False
 
     def __init_subclass__(cls, **kwargs):

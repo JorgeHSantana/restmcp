@@ -5,6 +5,8 @@ from pythia.datasource import DataSource
 
 
 class Repository(ABC):
+    """Data access layer. Wraps a DataSource and exposes a get() method. Subclass names must end with 'Repository'."""
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Repository"):

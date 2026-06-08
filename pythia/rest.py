@@ -21,6 +21,8 @@ def _auth_dependency(request: Request):
 
 
 class RestApp:
+    """FastAPI application with CORS, auth dependency, and default routes (/health, /mcp/tools)."""
+
     def __init__(self):
         self.app = FastAPI()
         cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]

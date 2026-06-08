@@ -5,6 +5,8 @@ from pythia.repository import Repository
 
 
 class Service(ABC):
+    """Business logic layer. Auto-discovers and copies Repository class attributes with DI support. Subclass names must end with 'Service'."""
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("Service"):

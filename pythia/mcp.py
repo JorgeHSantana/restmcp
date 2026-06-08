@@ -11,6 +11,8 @@ _JSON_TO_PYTHON = {
 
 
 class McpApp:
+    """Builds a FastMCP instance from registered url_handlers, mapping mcp_definition to typed pydantic tool wrappers."""
+
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 

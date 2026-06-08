@@ -5,6 +5,8 @@ from pythia.mcp import McpApp
 
 
 class Server:
+    """Singleton that composes RestApp and McpApp. Entry point for starting the server and accessing registered endpoints."""
+
     _instance: Optional["Server"] = None
 
     def __new__(cls):

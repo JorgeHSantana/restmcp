@@ -2,6 +2,8 @@ from abc import ABC
 
 
 class DataSource(ABC):
+    """External data provider (HTTP, DB, file). Subclass names must end with 'DataSource'."""
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.__name__.endswith("DataSource"):

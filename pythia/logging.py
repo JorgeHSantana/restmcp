@@ -3,6 +3,8 @@ import os
 
 
 class Logger:
+    """Thin wrapper over Python's logging module. Log level configurable via LOG_LEVEL env var (default: INFO)."""
+
     def __init__(self, name: str):
         level_name = os.getenv("LOG_LEVEL", "INFO").upper()
         level = getattr(logging, level_name, logging.INFO)
