@@ -1,7 +1,9 @@
-import datetime as dt
+import asyncio
+import inspect
 from abc import ABC
 
-from flask import jsonify, request
+from fastapi import Depends, Request
+from fastapi.responses import JSONResponse
 
 from pythia.exceptions import PythiaException, ValidationError
 
@@ -24,9 +26,14 @@ class Endpoint(ABC):
         if all(vars(cls).get(attr) for attr in _required):
             cls()
 
-    def _callback(self, **kwargs):
+    async def _callback(self, request: Request):
         try:
-            data = request.get_json() or {}
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            data = data or {}
+
             valid_params = self.mcp_definition.get("parameters", {}).get("properties", {})
             parameters = {}
 
@@ -35,39 +42,38 @@ class Endpoint(ABC):
                     raise ValidationError(f"Invalid parameter: {key}")
                 parameters[key] = value
 
-            for key, value in parameters.items():
-                if isinstance(value, str) and key == "reference_date":
-                    try:
-                        dt_parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-                        parameters[key] = dt_parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
-                    except ValueError:
-                        raise ValidationError(f"Invalid date format for reference_date: {value}")
+            if inspect.iscoroutinefunction(self.callback):
+                result = await self.callback(**parameters)
+            else:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, lambda: self.callback(**parameters)
+                )
 
-            result = self.callback(**parameters)
-            return jsonify({
+            return JSONResponse({
                 "tool": self.mcp_definition["name"],
                 "result": result,
                 "success": True,
             })
 
         except PythiaException as e:
-            return jsonify({
+            return JSONResponse({
                 "error": e.message,
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": e.__class__.__name__,
-            }), e.status_code
+            }, status_code=e.status_code)
 
         except Exception as e:
-            return jsonify({
+            return JSONResponse({
                 "error": str(e),
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": "InternalServerError",
-            }), 500
+            }, status_code=500)
 
     def __init__(self):
-        from pythia.server import Server
+        from pythia.server import Server, _auth_dependency
 
         self.mcp_definition = getattr(self, "mcp_definition", None)
         if not self.mcp_definition:
@@ -84,11 +90,16 @@ class Endpoint(ABC):
         if not getattr(self, "callback", None):
             raise ValueError(f"{self.__class__.__name__}: callback is required")
 
+        endpoint_self = self
+
+        async def route_handler(request: Request):
+            return await endpoint_self._callback(request)
+
         server = Server.get_instance()
-        server.app.add_url_rule(
+        server.app.add_api_route(
             self.url,
-            self.mcp_definition["name"],
-            self._callback,
+            route_handler,
             methods=[self.method],
+            dependencies=[Depends(_auth_dependency)],
         )
         server.register_url_handler(self)
