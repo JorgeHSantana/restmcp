@@ -46,3 +46,6 @@ coverage.xml
 
 # hatch / build
 .hatch/
+
+# internal dev docs
+docs/superpowers/
