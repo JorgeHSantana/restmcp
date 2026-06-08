@@ -1,4 +1,6 @@
 import pytest
+from starlette.testclient import TestClient
+
 from pythia.datasource import DataSource
 from pythia.endpoint import Endpoint
 from pythia.exceptions import NotFoundError, ValidationError
@@ -129,31 +131,30 @@ def test_abstract_base_endpoint_not_auto_registered():
         def callback(self, **kwargs): return {}
 
     server = Server.get_instance()
-    # BaseCustomEndpoint has no url or mcp_definition — must not be registered
     assert not any(
         getattr(h, "__class__", None) is BaseCustomEndpoint
         for h in server.url_handlers
     )
 
 
-# --- HTTP callbacks ---
+# --- HTTP callbacks (sync) ---
 
 def test_endpoint_callback_success():
     _make_get_item_endpoint()
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/get-item", json={"item_id": "42"})
     assert response.status_code == 200
-    data = response.get_json()
+    data = response.json()
     assert data["success"] is True
     assert data["result"]["id"] == "42"
 
 
 def test_endpoint_callback_invalid_param():
     _make_get_item_endpoint()
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/get-item", json={"unknown_param": "val"})
     assert response.status_code == 400
-    data = response.get_json()
+    data = response.json()
     assert data["success"] is False
     assert data["error_type"] == "ValidationError"
 
@@ -166,10 +167,10 @@ def test_endpoint_callback_validation_error_from_callback():
         def callback(self):
             raise ValidationError("invalid input")
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/raising", json={})
     assert response.status_code == 400
-    assert response.get_json()["success"] is False
+    assert response.json()["success"] is False
 
 
 def test_endpoint_callback_not_found_error():
@@ -180,7 +181,7 @@ def test_endpoint_callback_not_found_error():
         def callback(self):
             raise NotFoundError("not found")
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/notfound", json={})
     assert response.status_code == 404
 
@@ -193,10 +194,55 @@ def test_endpoint_callback_internal_error():
         def callback(self):
             raise RuntimeError("unexpected boom")
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/boom", json={})
     assert response.status_code == 500
-    assert response.get_json()["error_type"] == "InternalServerError"
+    assert response.json()["error_type"] == "InternalServerError"
+
+
+# --- async callback ---
+
+def test_endpoint_async_callback_is_awaited():
+    class AsyncEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "async_tool",
+            "description": "async callback",
+            "parameters": {"properties": {"x": {"type": "string"}}},
+        }
+        url = "/api/async"
+        method = "POST"
+
+        async def callback(self, x: str):
+            return {"async": True, "x": x}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/async", json={"x": "hello"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["result"]["async"] is True
+    assert data["result"]["x"] == "hello"
+
+
+# --- reference_date no longer special ---
+
+def test_reference_date_passed_as_is():
+    class DateEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "date_tool",
+            "description": "date passthrough",
+            "parameters": {"properties": {"reference_date": {"type": "string"}}},
+        }
+        url = "/api/date"
+        method = "POST"
+
+        def callback(self, reference_date: str):
+            return {"received": reference_date}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/date", json={"reference_date": "2024-01-01"})
+    assert response.status_code == 200
+    assert response.json()["result"]["received"] == "2024-01-01"
 
 
 # --- Full-stack injection: Endpoint → Service → Repository → DataSource ---
@@ -236,10 +282,10 @@ def test_endpoint_uses_service_with_real_repository():
         def callback(self, item_id: str):
             return _GetItemService().execute(item_id)
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/fullstack", json={"item_id": "1"})
     assert response.status_code == 200
-    assert response.get_json()["result"]["name"] == "Real Item"
+    assert response.json()["result"]["name"] == "Real Item"
 
 
 def test_endpoint_uses_service_with_injected_mock_repository():
@@ -261,10 +307,10 @@ def test_endpoint_uses_service_with_injected_mock_repository():
         def callback(self, item_id: str):
             return _GetItemService(repo=MockItemRepository()).execute(item_id)
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/fullstack-mock", json={"item_id": "99"})
     assert response.status_code == 200
-    assert response.get_json()["result"]["name"] == "Mock Item"
+    assert response.json()["result"]["name"] == "Mock Item"
 
 
 def test_endpoint_service_not_found_propagates_as_404():
@@ -286,7 +332,7 @@ def test_endpoint_service_not_found_propagates_as_404():
         def callback(self, item_id: str):
             return _GetItemService(repo=NotFoundMockRepository()).execute(item_id)
 
-    client = Server.get_instance().app.test_client()
+    client = TestClient(Server.get_instance().app)
     response = client.post("/api/fullstack-notfound", json={"item_id": "missing"})
     assert response.status_code == 404
-    assert response.get_json()["error_type"] == "NotFoundError"
+    assert response.json()["error_type"] == "NotFoundError"
