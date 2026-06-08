@@ -28,12 +28,10 @@ def test_service_suffix_enforced():
             pass
 
 
-def test_service_instantiation():
-    class SimpleService(Service):
-        pass
-
-    svc = SimpleService()
-    assert svc is not None
+def test_service_requires_repository():
+    with pytest.raises(TypeError, match="Repository"):
+        class SimpleService(Service):
+            pass
 
 
 def test_service_auto_discovers_repository():
@@ -85,14 +83,6 @@ def test_service_partial_override():
     assert isinstance(svc.repo_b, FakeRepository)
     assert svc.repo_b is not MultiService.repo_b
 
-
-def test_service_without_repositories():
-    class PureService(Service):
-        def execute(self):
-            return {"pure": True}
-
-    svc = PureService()
-    assert svc.execute() == {"pure": True}
 
 
 def test_service_execute_uses_injected_repository():

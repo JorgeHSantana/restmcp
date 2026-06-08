@@ -12,6 +12,17 @@ class Service(ABC):
                 f"Service subclasses must end with 'Service' "
                 f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Service'."
             )
+        has_repo = any(
+            isinstance(v, Repository)
+            for klass in cls.__mro__
+            if klass not in (Service, object)
+            for v in vars(klass).values()
+        )
+        if not has_repo:
+            raise TypeError(
+                f"{cls.__name__}: must define at least one Repository instance "
+                f"as a class attribute."
+            )
 
     def __init__(self, **overrides):
         seen = set()

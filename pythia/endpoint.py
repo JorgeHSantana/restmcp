@@ -8,6 +8,30 @@ from fastapi.responses import JSONResponse
 from pythia.exceptions import PythiaException, ValidationError
 
 
+def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
+    if not isinstance(mcp_def, dict):
+        raise TypeError(
+            f"{cls_name}: mcp_definition must be a dict, got {type(mcp_def).__name__}"
+        )
+    for key in ("name", "description"):
+        val = mcp_def.get(key)
+        if not isinstance(val, str) or not val.strip():
+            raise TypeError(
+                f"{cls_name}: mcp_definition['{key}'] must be a non-empty string"
+            )
+    params = mcp_def.get("parameters")
+    if params is not None:
+        if not isinstance(params, dict):
+            raise TypeError(
+                f"{cls_name}: mcp_definition['parameters'] must be a dict"
+            )
+        props = params.get("properties")
+        if props is not None and not isinstance(props, dict):
+            raise TypeError(
+                f"{cls_name}: mcp_definition['parameters']['properties'] must be a dict"
+            )
+
+
 class Endpoint(ABC):
     disabled: bool = False
 
@@ -24,6 +48,7 @@ class Endpoint(ABC):
 
         _required = ("url", "method", "mcp_definition", "callback")
         if all(vars(cls).get(attr) for attr in _required):
+            _validate_mcp_definition(cls.__name__, vars(cls)["mcp_definition"])
             try:
                 cls()
             except TypeError as e:

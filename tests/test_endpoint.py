@@ -36,6 +36,48 @@ def test_endpoint_suffix_enforced():
             def callback(self): pass
 
 
+# --- mcp_definition structure validation ---
+
+def test_mcp_definition_not_a_dict_raises():
+    with pytest.raises(TypeError, match="must be a dict"):
+        class BadEndpoint(Endpoint):
+            mcp_definition = "not a dict"
+            url = "/x"
+            method = "POST"
+            def callback(self): pass
+
+
+def test_mcp_definition_missing_name_raises():
+    with pytest.raises(TypeError, match="'name'"):
+        class BadEndpoint(Endpoint):
+            mcp_definition = {"description": "x", "parameters": {"properties": {}}}
+            url = "/x"
+            method = "POST"
+            def callback(self): pass
+
+
+def test_mcp_definition_missing_description_raises():
+    with pytest.raises(TypeError, match="'description'"):
+        class BadEndpoint(Endpoint):
+            mcp_definition = {"name": "x", "parameters": {"properties": {}}}
+            url = "/x"
+            method = "POST"
+            def callback(self): pass
+
+
+def test_mcp_definition_bad_properties_raises():
+    with pytest.raises(TypeError, match="'properties'"):
+        class BadEndpoint(Endpoint):
+            mcp_definition = {
+                "name": "x",
+                "description": "x",
+                "parameters": {"properties": "not a dict"},
+            }
+            url = "/x"
+            method = "POST"
+            def callback(self): pass
+
+
 # --- validation errors on missing attributes ---
 
 def test_endpoint_requires_mcp_definition():
