@@ -24,7 +24,14 @@ class Endpoint(ABC):
 
         _required = ("url", "method", "mcp_definition", "callback")
         if all(vars(cls).get(attr) for attr in _required):
-            cls()
+            try:
+                cls()
+            except TypeError as e:
+                raise TypeError(
+                    f"{cls.__name__}: auto-registration failed. "
+                    f"Endpoint subclasses must not define __init__ with parameters — "
+                    f"use Service/Repository for dependencies. Original error: {e}"
+                ) from e
 
     async def _callback(self, request: Request):
         try:
