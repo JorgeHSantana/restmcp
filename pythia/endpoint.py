@@ -105,7 +105,8 @@ class Endpoint(ABC):
             }, status_code=500)
 
     def __init__(self):
-        from pythia.server import Server, _auth_dependency
+        from pythia.server import Server
+        from pythia.rest import _auth_dependency
 
         self.mcp_definition = getattr(self, "mcp_definition", None)
         if not self.mcp_definition:
