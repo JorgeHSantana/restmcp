@@ -1,9 +1,9 @@
-# pythia
+# Pythia
 
 > The Oracle answers. Your server too.
 
 Python framework for building **MCP servers** with a layered architecture and REST compatibility.  
-Pythia turns annotated classes into MCP tools and HTTP endpoints — auto-registered, dependency-injected, sync/async agnostic.
+Pythia turns annotated classes into MCP tools and HTTP endpoints: auto-registered, dependency-injected, sync/async agnostic.
 
 ---
 
@@ -23,7 +23,7 @@ graph LR
     style DS fill:#a855f7,color:#fff,stroke:none
 ```
 
-Each layer knows only the layer directly below it. Every class name is suffix-enforced at import time — a typo raises `TypeError` before the server starts.
+Each layer knows only the layer directly below it. Every class name is suffix-enforced at import time: a typo raises `TypeError` before the server starts.
 
 ---
 
@@ -146,7 +146,7 @@ repo = ProductRepository()                              # uses real DataSource
 repo = ProductRepository(data_source=MockDataSource())  # injects mock for tests
 ```
 
-`Repository.__init__` uses `copy.copy()` of the class attribute — instances are always isolated.
+`Repository.__init__` uses `copy.copy()` of the class attribute: instances are always isolated.
 
 ---
 
@@ -180,7 +180,7 @@ Repository class attributes are auto-discovered via MRO and isolated per instanc
 
 ### `Endpoint`
 
-HTTP + MCP route. **Auto-registers on class definition** — no manual wiring needed.  
+HTTP + MCP route. **Auto-registers on class definition**: no manual wiring needed.  
 **Rules:** name ends with `Endpoint`; must declare `mcp_definition`, `url`, `method`, and `callback`.
 
 ```python
@@ -220,22 +220,22 @@ class GetProductEndpoint(Endpoint):
 class BaseAuthEndpoint(Endpoint):
     method = "POST"
     def callback(self, **kwargs): ...
-# ↑ not registered — url and mcp_definition are missing
+# ↑ not registered: url and mcp_definition are missing
 
 class GetUserEndpoint(BaseAuthEndpoint):
     mcp_definition = { ... }
     url = "/api/get-user"
-# ↑ registered automatically — all required attributes present
+# ↑ registered automatically: all required attributes present
 ```
 
-**Sync and async callbacks** are both supported — pythia detects and handles either:
+**Sync and async callbacks** are both supported: pythia detects and handles either:
 
 ```python
-# sync — runs in a thread pool, does not block the event loop
+# sync: runs in a thread pool, does not block the event loop
 def callback(self, product_id: str) -> dict:
     return requests.get(f"https://api.example.com/products/{product_id}").json()
 
-# async — awaited directly; use asyncio.gather for parallel I/O
+# async: awaited directly; use asyncio.gather for parallel I/O
 async def callback(self, product_id: str) -> dict:
     async with httpx.AsyncClient() as client:
         r = await client.get(f"https://api.example.com/products/{product_id}")
@@ -285,7 +285,7 @@ mcp = server.get_mcp()
 
 ## Exceptions
 
-Raised inside `callback` — caught by `Endpoint` and converted to HTTP responses automatically.
+Raised inside `callback`: caught by `Endpoint` and converted to HTTP responses automatically.
 
 ```python
 from pythia import ValidationError, NotFoundError
@@ -333,7 +333,7 @@ def test_get_product():
 
 ## Naming conventions
 
-All base classes enforce a suffix. Violating it raises `TypeError` at import time — before the server starts.
+All base classes enforce a suffix. Violating it raises `TypeError` at import time: before the server starts.
 
 | Base class | Required suffix | Example |
 |------------|----------------|---------|
