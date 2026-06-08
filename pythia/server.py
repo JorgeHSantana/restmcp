@@ -71,9 +71,9 @@ class Server:
     def register_url_handler(self, handler: Any):
         self.url_handlers.append(handler)
 
-    def start(self, host: str = "0.0.0.0", port: int = 5000, debug: bool = True):
+    def start(self, host: str = "0.0.0.0", port: int = 5000, reload: bool = False):
         import uvicorn
-        uvicorn.run(self.app, host=host, port=port)
+        uvicorn.run(self.app, host=host, port=port, reload=reload)
 
     def get_mcp(self):
         from fastmcp import FastMCP
