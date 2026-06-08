@@ -228,6 +228,8 @@ class GetProductEndpoint(Endpoint):
         return GetProductDetailsService().execute(product_id)
 ```
 
+> **Parámetros de path** usan sintaxis FastAPI: `url = "/clients/{client_id}"`. La sintaxis Flask `<int:client_id>` no funciona.
+
 No es necesario instanciar — **definir la clase es suficiente**. En cuanto Python procesa el cuerpo de la `class`, la ruta queda registrada en el servidor.
 
 **Deshabilitar un endpoint:**
@@ -282,7 +284,7 @@ class GetUserEndpoint(BaseAuthEndpoint):
 
 ### `Server`
 
-Singleton Flask con dual-mode: HTTP directo o protocolo MCP vía FastMCP.
+Singleton FastAPI con dual-mode: HTTP directo o protocolo MCP vía FastMCP. `server.start()` usa uvicorn internamente.
 
 ```python
 from pythia import Server
@@ -484,6 +486,26 @@ if __name__ == "__main__":
 
 ---
 
+## Soporte Async
+
+`callback` puede ser sync o async — pythia detecta y maneja ambos:
+
+```python
+# sync — se ejecuta en thread pool, no bloquea el event loop
+def callback(self, client_id: int):
+    return requests.get(f"https://api.ejemplo.com/clients/{client_id}").json()
+
+# async — se awaita directamente
+async def callback(self, client_id: int):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.ejemplo.com/clients/{client_id}")
+        return response.json()
+```
+
+Usa callbacks sync para casos simples. Migra a async cuando necesites I/O concurrente dentro de una única solicitud (ej: llamar múltiples APIs en paralelo con `asyncio.gather`).
+
+---
+
 ## Tests con inyección
 
 ```python
@@ -533,8 +555,8 @@ Todas las clases base exigen sufijo. Violarlo lanza `TypeError` en tiempo de imp
 ## Dependencias
 
 ```toml
-flask >= 2.0
-flask-cors >= 4.0
+fastapi >= 0.100
+uvicorn >= 0.20
 fastmcp >= 2.0
 pydantic >= 2.0
 click >= 8.0
