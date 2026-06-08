@@ -1,5 +1,5 @@
 from pythia import Server
-import urls  # auto-discovery
+import example.urls  # auto-discovery de todos os endpoints
 
 server = Server.get_instance()
 
