@@ -2,13 +2,22 @@ import datetime as dt
 import os
 from typing import Any, List, Optional
 
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from fastapi import FastAPI, HTTPException, Request
+from starlette.middleware.cors import CORSMiddleware
 
 
 def _validate_api_key(raw_key: str) -> bool:
     env_keys = os.getenv("AUTH_API_KEY", "")
     return bool(raw_key) and raw_key in [k.strip() for k in env_keys.split(",") if k.strip()]
+
+
+def _auth_dependency(request: Request):
+    if not os.getenv("AUTH_API_KEY"):
+        return
+    auth_header = request.headers.get("Authorization")
+    api_key = auth_header.split(" ")[1] if auth_header and auth_header.startswith("Bearer ") else None
+    if not api_key or not _validate_api_key(api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 class Server:
@@ -24,30 +33,21 @@ class Server:
         if self._initialized:
             return
 
-        self.app = Flask(__name__)
-        CORS(self.app)
+        self.app = FastAPI()
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
         self.url_handlers: List = []
-
-        @self.app.before_request
-        def check_auth():
-            if not os.getenv("AUTH_API_KEY"):
-                return
-            if request.endpoint in ("health_check", "list_tools"):
-                return
-            auth_header = request.headers.get("Authorization")
-            api_key = None
-            if auth_header and auth_header.startswith("Bearer "):
-                api_key = auth_header.split(" ")[1]
-            if not api_key or not _validate_api_key(api_key):
-                return jsonify({"error": "Unauthorized"}), 401
-
         self._setup_default_routes()
         self._initialized = True
 
     def _setup_default_routes(self):
-        @self.app.route("/mcp/tools", methods=["GET"])
+        @self.app.get("/mcp/tools")
         def list_tools():
-            return jsonify({
+            return {
                 "tools": [
                     {
                         "name": h.mcp_definition["name"],
@@ -59,20 +59,21 @@ class Server:
                 ],
                 "server": "pythia",
                 "version": "0.1.0",
-            })
+            }
 
-        @self.app.route("/health", methods=["GET"])
+        @self.app.get("/health")
         def health_check():
-            return jsonify({
+            return {
                 "status": "healthy",
                 "timestamp": dt.datetime.utcnow().isoformat(),
-            })
+            }
 
     def register_url_handler(self, handler: Any):
         self.url_handlers.append(handler)
 
     def start(self, host: str = "0.0.0.0", port: int = 5000, debug: bool = True):
-        self.app.run(host=host, port=port, debug=debug)
+        import uvicorn
+        uvicorn.run(self.app, host=host, port=port)
 
     def get_mcp(self):
         from fastmcp import FastMCP
@@ -115,7 +116,7 @@ class Server:
 
         ModelClass = create_model(f"{name}_args", **pydantic_fields)
 
-        def tool_wrapper(args: ModelClass) -> dict:  # type: ignore
+        def tool_wrapper(args: ModelClass) -> dict:
             return handler.callback(**args.model_dump())
 
         tool_wrapper.__name__ = name
@@ -124,7 +125,7 @@ class Server:
         new_param = inspect.Parameter(
             "args", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ModelClass
         )
-        tool_wrapper.__signature__ = sig.replace(parameters=(new_param,))  # type: ignore
+        tool_wrapper.__signature__ = sig.replace(parameters=(new_param,))
         mcp.add_tool(tool_wrapper)
 
     @classmethod
