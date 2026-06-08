@@ -6,6 +6,7 @@ from pythia.endpoint import Endpoint
 from pythia.server import Server
 from pythia.logging import Logger
 from pythia.exceptions import ValidationError, NotFoundError
+from pythia.types import McpDefinition
 
 __all__ = [
     "DataSource",
@@ -17,4 +18,5 @@ __all__ = [
     "Logger",
     "ValidationError",
     "NotFoundError",
+    "McpDefinition",
 ]

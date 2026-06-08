@@ -34,9 +34,10 @@ class Server:
             return
 
         self.app = FastAPI()
+        cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=cors_origins,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -85,8 +86,16 @@ class Server:
 
     def _register_fastmcp_tool(self, mcp: Any, handler: Any):
         from pydantic import Field, create_model
-        from typing import List, Optional
+        from typing import Dict, List, Optional
         import inspect
+
+        _JSON_TO_PYTHON = {
+            "string": str,
+            "integer": int,
+            "number": float,
+            "boolean": bool,
+            "object": dict,
+        }
 
         def_dict = handler.mcp_definition
         name = def_dict["name"]
@@ -96,14 +105,14 @@ class Server:
         pydantic_fields = {}
         for prop_name, prop_data in properties.items():
             ptype = prop_data.get("type")
-            py_type = str
-            if ptype == "integer":
-                py_type = int
-            elif ptype == "boolean":
-                py_type = bool
-            elif ptype == "array":
-                item_type = int if prop_data.get("items", {}).get("type") == "integer" else str
+            if ptype == "array":
+                item_ptype = prop_data.get("items", {}).get("type", "string")
+                item_type = _JSON_TO_PYTHON.get(item_ptype, str)
                 py_type = List[item_type]
+            elif ptype == "object":
+                py_type = Dict[str, Any]
+            else:
+                py_type = _JSON_TO_PYTHON.get(ptype, str)
 
             default_val = prop_data.get("default", ...)
             if default_val is None:
