@@ -1,10 +1,29 @@
 # pythia
 
-Python framework for building MCP servers with a layered architecture.
+> The Oracle answers. Your server too.
 
-Pythia standardizes the MCP server pattern into reusable base classes and a scaffolding CLI, so you can focus on business logic instead of boilerplate.
+Python framework for building **MCP servers** with a layered architecture and REST compatibility.  
+Pythia turns annotated classes into MCP tools and HTTP endpoints — auto-registered, dependency-injected, sync/async agnostic.
 
-> The name comes from the Pythia — the Oracle of Delphi. MCP servers are oracles: they answer AI clients' questions with structured data.
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    LLM["🤖 LLM / Client"] -->|"HTTP or MCP"| EP["Endpoint"]
+    EP --> SV["Service"]
+    SV --> RP["Repository"]
+    RP --> DS["DataSource"]
+    DS --> EX[("External\nAPI / DB")]
+
+    style EP fill:#4f46e5,color:#fff,stroke:none
+    style SV fill:#7c3aed,color:#fff,stroke:none
+    style RP fill:#9333ea,color:#fff,stroke:none
+    style DS fill:#a855f7,color:#fff,stroke:none
+```
+
+Each layer knows only the layer directly below it. Every class name is suffix-enforced at import time — a typo raises `TypeError` before the server starts.
 
 ---
 
@@ -20,7 +39,6 @@ pip install pythia
 
 ```bash
 pythia new my-server
-
 cd my-server
 pip install -e .
 python main.py
@@ -42,16 +60,25 @@ my-server/
 
 ---
 
-## Architecture
+## How it works
 
-```
-Endpoint  →  Service  →  Repository  →  DataSource
-   ↑              ↑            ↑              ↑
-HTTP route    business      data          connection
-              logic         access
-```
+```mermaid
+sequenceDiagram
+    participant C as Client / LLM
+    participant E as Endpoint
+    participant S as Service
+    participant R as Repository
+    participant D as DataSource
 
-Each layer knows only the layer directly below it. The `Server` singleton wires everything together.
+    C->>E: POST /api/get-product {"product_id": "1"}
+    E->>S: service.execute(product_id="1")
+    S->>R: repo.get(product_id="1")
+    R->>D: data_source.fetch("1")
+    D-->>R: raw dict
+    R-->>S: ProductEntity
+    S-->>E: result dict
+    E-->>C: {"tool": "get_product", "result": {...}, "success": true}
+```
 
 ---
 
@@ -59,39 +86,29 @@ Each layer knows only the layer directly below it. The `Server` singleton wires 
 
 ### `DataSource`
 
-Abstracts the connection to an external data source (REST API, database, file, etc.).
-
-**Rule:** the class name must end with `DataSource`.
+Abstracts the connection to an external data source (REST API, database, file).  
+**Rule:** class name must end with `DataSource`.
 
 ```python
-import os
-import requests
+import httpx
 from pythia import DataSource
 
 class ProductApiDataSource(DataSource):
-    def __init__(self):
-        self.base_url = os.getenv("PRODUCT_API_URL")
-        self.api_key  = os.getenv("PRODUCT_API_KEY")
+    base_url = "https://api.example.com"
 
-    def get(self, path: str, **params) -> dict:
-        response = requests.get(
-            f"{self.base_url}{path}",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            params=params,
-        )
-        response.raise_for_status()
-        return response.json()
+    async def fetch(self, product_id: str) -> dict:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{self.base_url}/products/{product_id}")
+            r.raise_for_status()
+            return r.json()
 ```
-
-> **Thread safety** is the DataSource's responsibility. HTTP clients and connection pools (SQLAlchemy, pymongo) are thread-safe by design — sharing them across instances via `copy.copy` is correct and expected.
 
 ---
 
 ### `Entity`
 
-Structured domain data. Backed by Pydantic `BaseModel` — automatic type validation.
-
-**Rule:** the class name must end with `Entity`.
+Structured domain data backed by Pydantic. Automatic type validation.  
+**Rule:** class name must end with `Entity`.
 
 ```python
 from pythia import Entity
@@ -100,30 +117,14 @@ class ProductEntity(Entity):
     id:    str
     name:  str
     price: float
-
-class OrderEntity(Entity):
-    id:         str
-    product_id: str
-    quantity:   int
-    total:      float
-```
-
-```python
-product = ProductEntity(id="1", name="Widget", price=9.99)
-print(product.model_dump())
-# {'id': '1', 'name': 'Widget', 'price': 9.99}
 ```
 
 ---
 
 ### `Repository`
 
-Fetches data via a `DataSource` and returns `Entity` objects. One responsibility per Repository: one source, one data type.
-
-**Rules:**
-- The class name must end with `Repository`.
-- Must declare `data_source` as a class attribute (a `DataSource` instance).
-- Must implement `get(**kwargs)`.
+Fetches data via a `DataSource` and returns `Entity` objects. One source, one data type.  
+**Rules:** name ends with `Repository`; must declare `data_source` as class attribute; must implement `get()`.
 
 ```python
 from pythia import Repository
@@ -133,315 +134,55 @@ from models.product import ProductEntity
 class ProductRepository(Repository):
     data_source = ProductApiDataSource()
 
-    def get(self, product_id: str) -> ProductEntity:
-        raw = self.data_source.get(f"/products/{product_id}")
+    async def get(self, product_id: str) -> ProductEntity:
+        raw = await self.data_source.fetch(product_id)
         return ProductEntity(**raw)
 ```
 
-**Dependency injection for tests:**
+**Dependency injection:**
 
 ```python
-# Production — uses the real DataSource
-repo = ProductRepository()
-
-# Test — swap the DataSource without changing the class
-repo = ProductRepository(data_source=MockDataSource())
+repo = ProductRepository()                              # uses real DataSource
+repo = ProductRepository(data_source=MockDataSource())  # injects mock for tests
 ```
 
-The injection works because `Repository.__init__` accepts an optional `data_source`. If not provided, it uses `copy.copy()` of the class attribute — ensuring isolation between instances.
+`Repository.__init__` uses `copy.copy()` of the class attribute — instances are always isolated.
 
 ---
 
 ### `Service`
 
-Orchestrates business logic. This is where joins, transformations, and rules that involve more than one data source happen.
-
-**Rules:**
-- The class name must end with `Service`.
-- Class attributes of type `Repository` are auto-discovered and isolated per instance via `copy.copy`.
-- Accepts repository overrides via `**kwargs` in the constructor.
+Orchestrates business logic. Where joins, transformations, and multi-source rules live.  
+**Rules:** name ends with `Service`; must declare at least one `Repository` as class attribute.
 
 ```python
 from pythia import Service
-from repositories.product import ProductRepository
-from repositories.inventory import InventoryRepository
-
-class GetProductDetailsService(Service):
-    product_repo   = ProductRepository()
-    inventory_repo = InventoryRepository()
-
-    def execute(self, product_id: str) -> dict:
-        product   = self.product_repo.get(product_id=product_id)
-        inventory = self.inventory_repo.get(product_id=product_id)
-
-        return {
-            **product.model_dump(),
-            "stock":      inventory.quantity,
-            "available":  inventory.quantity > 0,
-        }
-```
-
-**Dependency injection for tests:**
-
-```python
-# Production
-result = GetProductDetailsService().execute(product_id="1")
-
-# Test — swap only the inventory repository
-result = GetProductDetailsService(
-    inventory_repo=MockInventoryRepository()
-).execute(product_id="1")
-```
-
-> **Joining data from two databases?** Do it in the `Service`. Each `Repository` accesses a single `DataSource`. The `Service` calls both and merges the data in Python.
-
----
-
-### `Endpoint`
-
-HTTP route that auto-registers on the `Server` singleton the moment the class is defined. Validates parameters, delegates to the callback, and returns a standardized JSON response.
-
-**Rules:**
-- The class name must end with `Endpoint`.
-- Must declare `mcp_definition`, `url`, `method`, and `callback`.
-
-```python
-from pythia import Endpoint
-from services.product import GetProductDetailsService
-
-class GetProductEndpoint(Endpoint):
-    mcp_definition = {
-        "name":        "get_product",
-        "description": "Returns product details by ID",
-        "parameters": {
-            "properties": {
-                "product_id": {
-                    "type":        "string",
-                    "description": "Product ID",
-                },
-            },
-        },
-    }
-    url    = "/api/get-product"
-    method = "POST"
-
-    def callback(self, product_id: str) -> dict:
-        return GetProductDetailsService().execute(product_id)
-```
-
-> **URL path parameters** use FastAPI syntax: `url = "/clients/{client_id}"`. Flask's `<int:client_id>` syntax does not work.
-
-No instantiation needed — **defining the class is enough**. As soon as Python processes the `class` body, the route is registered on the server.
-
-**Disabling an endpoint:**
-
-```python
-class GetProductEndpoint(Endpoint):
-    disabled = True   # skips auto-registration
-    ...
-```
-
-Set `disabled = True` to temporarily deactivate an endpoint without deleting the code. It can still be instantiated manually.
-
-**Abstract base classes** (missing `url`, `method`, `mcp_definition`, or `callback`) are never auto-registered:
-
-```python
-class BaseAuthEndpoint(Endpoint):
-    method = "POST"
-
-    def callback(self, **kwargs):
-        # shared auth logic
-        ...
-# ↑ Not registered — url and mcp_definition are missing
-
-class GetUserEndpoint(BaseAuthEndpoint):
-    mcp_definition = { ... }
-    url = "/api/get-user"
-    # ↑ Registered automatically — all required attributes present
-```
-
-**Success response:**
-
-```json
-{
-  "tool":    "get_product",
-  "result":  { "id": "1", "name": "Widget", "price": 9.99, "stock": 42 },
-  "success": true
-}
-```
-
-**Error response (`ValidationError` → 400, `NotFoundError` → 404):**
-
-```json
-{
-  "tool":       "get_product",
-  "error":      "product_id is required",
-  "error_type": "ValidationError",
-  "success":    false
-}
-```
-
----
-
-### `Server`
-
-FastAPI singleton with dual-mode: direct HTTP or MCP protocol via FastMCP. `server.start()` uses uvicorn under the hood.
-
-```python
-from pythia import Server
-import urls  # runs urls/__init__.py → imports all endpoint modules → auto-registers all routes
-
-server = Server.get_instance()
-
-if __name__ == "__main__":
-    server.start(host="0.0.0.0", port=5000)
-```
-
-```python
-# MCP mode (for AI clients)
-mcp = server.get_mcp()
-```
-
-**Built-in routes:**
-
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/health` | GET | Server status |
-| `/mcp/tools` | GET | Lists all registered tools |
-
-**Authentication via environment variable:**
-
-```bash
-AUTH_API_KEY=my-secret-key python main.py
-```
-
-All routes (except `/health` and `/mcp/tools`) require `Authorization: Bearer <key>`. Multiple keys are supported, comma-separated.
-
----
-
-### `Logger`
-
-Wrapper over Python's standard `logging` with consistent formatting.
-
-```python
-from pythia import Logger
-
-logger = Logger(__name__)
-
-logger.info("Server started")
-logger.warning("Slow response: %.2fs", elapsed)
-logger.error("Connection failed: %s", err)
-logger.debug("Received payload: %s", payload)
-```
-
-Output:
-
-```
-[2026-06-07 10:30:00] INFO datasource.product_api — Server started
-```
-
-**Log level via environment variable:**
-
-```bash
-LOG_LEVEL=DEBUG python main.py   # DEBUG | INFO | WARNING | ERROR
-```
-
----
-
-### Exceptions
-
-Imported directly from `pythia`. `Endpoint` catches them automatically and converts to HTTP responses.
-
-```python
-from pythia import ValidationError, NotFoundError
-
-raise ValidationError("product_id is required")   # → HTTP 400
-raise NotFoundError("Product not found")           # → HTTP 404
-```
-
-Hierarchy:
-
-```
-PythiaException          # base (not exposed directly)
-├── ValidationError      # → HTTP 400
-└── NotFoundError        # → HTTP 404
-```
-
----
-
-## Full example
-
-```
-my-server/
-├── datasource/
-│   └── product_api.py      # ProductApiDataSource
-├── models/
-│   └── product.py          # ProductEntity
-├── repositories/
-│   └── product.py          # ProductRepository
-├── services/
-│   └── product.py          # GetProductService
-├── urls/
-│   ├── __init__.py         # auto-scans urls/ — never edit this file
-│   └── get_product.py      # GetProductEndpoint — auto-registered on import
-└── main.py
-```
-
-**`datasource/product_api.py`**
-```python
-import os
-import requests
-from pythia import DataSource
-
-class ProductApiDataSource(DataSource):
-    def __init__(self):
-        self.base_url = os.getenv("PRODUCT_API_URL")
-
-    def fetch(self, product_id: str) -> dict:
-        r = requests.get(f"{self.base_url}/products/{product_id}")
-        r.raise_for_status()
-        return r.json()
-```
-
-**`models/product.py`**
-```python
-from pythia import Entity
-
-class ProductEntity(Entity):
-    id:    str
-    name:  str
-    price: float
-```
-
-**`repositories/product.py`**
-```python
-from pythia import Repository
-from datasource.product_api import ProductApiDataSource
-from models.product import ProductEntity
-
-class ProductRepository(Repository):
-    data_source = ProductApiDataSource()
-
-    def get(self, product_id: str) -> ProductEntity:
-        return ProductEntity(**self.data_source.fetch(product_id))
-```
-
-**`services/product.py`**
-```python
-from pythia import NotFoundError, Service
 from repositories.product import ProductRepository
 
 class GetProductService(Service):
     repo = ProductRepository()
 
-    def execute(self, product_id: str) -> dict:
-        product = self.repo.get(product_id=product_id)
-        if not product:
-            raise NotFoundError(f"Product {product_id} not found")
+    async def execute(self, product_id: str) -> dict:
+        product = await self.repo.get(product_id=product_id)
         return product.model_dump()
 ```
 
-**`urls/get_product.py`**
+**Dependency injection:**
+
+```python
+svc = GetProductService()                       # production
+svc = GetProductService(repo=MockRepository())  # test
+```
+
+Repository class attributes are auto-discovered via MRO and isolated per instance.
+
+---
+
+### `Endpoint`
+
+HTTP + MCP route. **Auto-registers on class definition** — no manual wiring needed.  
+**Rules:** name ends with `Endpoint`; must declare `mcp_definition`, `url`, `method`, and `callback`.
+
 ```python
 from pythia import Endpoint
 from services.product import GetProductService
@@ -459,71 +200,121 @@ class GetProductEndpoint(Endpoint):
     url    = "/api/get-product"
     method = "POST"
 
-    def callback(self, product_id: str) -> dict:
-        return GetProductService().execute(product_id)
-
-# No instantiation needed — defining the class registers the route automatically.
+    async def callback(self, product_id: str) -> dict:
+        return await GetProductService().execute(product_id)
 ```
 
-**`urls/__init__.py`** — generated once by the CLI, never edited again
-```python
-import importlib
-import pkgutil
+Defining the class is enough. The route is registered on the `Server` singleton the moment Python processes the class body.
 
-for _info in pkgutil.iter_modules(__path__):
-    importlib.import_module(f"{__name__}.{_info.name}")
+**Disabling an endpoint:**
+
+```python
+class GetProductEndpoint(Endpoint):
+    disabled = True  # skips auto-registration; can still be instantiated manually
+    ...
 ```
 
-**`main.py`**
+**Abstract base classes** (missing any required attribute) are never auto-registered:
+
 ```python
-from pythia import Server
-import urls   # triggers urls/__init__.py → imports all modules → registers all endpoints
+class BaseAuthEndpoint(Endpoint):
+    method = "POST"
+    def callback(self, **kwargs): ...
+# ↑ not registered — url and mcp_definition are missing
 
-server = Server.get_instance()
+class GetUserEndpoint(BaseAuthEndpoint):
+    mcp_definition = { ... }
+    url = "/api/get-user"
+# ↑ registered automatically — all required attributes present
+```
 
-if __name__ == "__main__":
-    server.start()
+**Sync and async callbacks** are both supported — pythia detects and handles either:
+
+```python
+# sync — runs in a thread pool, does not block the event loop
+def callback(self, product_id: str) -> dict:
+    return requests.get(f"https://api.example.com/products/{product_id}").json()
+
+# async — awaited directly; use asyncio.gather for parallel I/O
+async def callback(self, product_id: str) -> dict:
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"https://api.example.com/products/{product_id}")
+        return r.json()
+```
+
+**Response format:**
+
+```json
+{ "tool": "get_product", "result": { ... }, "success": true }
+```
+
+```json
+{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
 ```
 
 ---
 
-## Async Support
+### `Server`
 
-`callback` can be either sync or async — pythia detects and handles both:
+Singleton with dual-mode: HTTP via FastAPI/uvicorn or MCP protocol via FastMCP.
 
 ```python
-# sync — runs in a thread pool, does not block the event loop
-def callback(self, client_id: int):
-    return requests.get(f"https://api.example.com/clients/{client_id}").json()
+from pythia import Server
+import urls  # triggers auto-discovery of all endpoint modules
 
-# async — awaited directly
-async def callback(self, client_id: int):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"https://api.example.com/clients/{client_id}")
-        return response.json()
+server = Server.get_instance()
+
+if __name__ == "__main__":
+    server.start(host="0.0.0.0", port=5000)
 ```
 
-Use sync callbacks for simple cases. Migrate to async when you need concurrent I/O within a single request (e.g., calling multiple APIs in parallel with `asyncio.gather`).
+```python
+# MCP mode
+mcp = server.get_mcp()
+```
+
+**Built-in routes:**
+
+| Route | Method | Auth required |
+|-------|--------|---------------|
+| `/health` | GET | No |
+| `/mcp/tools` | GET | No |
+| _your endpoints_ | POST | Yes (if `AUTH_API_KEY` is set) |
+
+---
+
+## Exceptions
+
+Raised inside `callback` — caught by `Endpoint` and converted to HTTP responses automatically.
+
+```python
+from pythia import ValidationError, NotFoundError
+
+raise ValidationError("product_id is required")  # → HTTP 400
+raise NotFoundError("Product not found")          # → HTTP 404
+```
+
+```mermaid
+graph TD
+    PythiaException --> ValidationError["ValidationError (400)"]
+    PythiaException --> NotFoundError["NotFoundError (404)"]
+```
 
 ---
 
 ## Testing with injection
 
 ```python
-# tests/test_get_product.py
-from services.product import GetProductService
-from repositories.product import ProductRepository
 from pythia import DataSource
+from repositories.product import ProductRepository
+from services.product import GetProductService
 
 class FakeProductApiDataSource(DataSource):
-    def fetch(self, product_id: str) -> dict:
+    async def fetch(self, product_id: str) -> dict:
         return {"id": product_id, "name": "Test Widget", "price": 1.99}
 
-class FakeProductRepository(ProductRepository):
-    data_source = FakeProductApiDataSource()
-
-def test_get_product_returns_correct_data():
-    svc = GetProductService(repo=FakeProductRepository())
+def test_get_product():
+    svc = GetProductService(repo=ProductRepository(data_source=FakeProductApiDataSource()))
     result = svc.execute(product_id="1")
     assert result["name"] == "Test Widget"
 ```
@@ -534,14 +325,15 @@ def test_get_product_returns_correct_data():
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTH_API_KEY` | _(disabled)_ | Bearer key for authentication. Multiple keys supported, comma-separated. |
-| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `AUTH_API_KEY` | _(disabled)_ | Bearer token. Multiple keys supported comma-separated. |
+| `CORS_ORIGINS` | `*` | Allowed origins. Multiple values supported comma-separated. |
+| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ---
 
 ## Naming conventions
 
-All base classes enforce a suffix. Violating it raises `TypeError` at import time:
+All base classes enforce a suffix. Violating it raises `TypeError` at import time — before the server starts.
 
 | Base class | Required suffix | Example |
 |------------|----------------|---------|
@@ -555,10 +347,24 @@ All base classes enforce a suffix. Violating it raises `TypeError` at import tim
 
 ## Dependencies
 
-```toml
-fastapi >= 0.100
-uvicorn >= 0.20
-fastmcp >= 2.0
-pydantic >= 2.0
-click >= 8.0
 ```
+fastapi    >= 0.100
+uvicorn    >= 0.20
+fastmcp    >= 2.0
+pydantic   >= 2.0
+click      >= 8.0
+```
+
+---
+
+## Author
+
+**Jorge Henrique Moreira Santana**  
+Electrical Engineer, Postgraduate in Artificial Intelligence  
+[LinkedIn](https://www.linkedin.com/in/jorge-santana-b246874a/) · jorge.henrique.moreira.santana@gmail.com
+
+---
+
+## License
+
+[MIT](LICENSE)

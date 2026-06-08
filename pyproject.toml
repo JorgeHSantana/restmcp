@@ -5,10 +5,26 @@ build-backend = "hatchling.build"
 [project]
 name = "pythia"
 version = "0.1.0"
-description = "Framework Python para construção de MCP servers"
+description = "Python framework for building MCP servers with a layered architecture and REST compatibility"
+readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "pythia" }]
+authors = [
+    { name = "Jorge Henrique Moreira Santana", email = "jorge.henrique.moreira.santana@gmail.com" },
+]
 license = { text = "MIT" }
+keywords = ["mcp", "fastapi", "framework", "ai", "llm", "server", "rest", "async"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
@@ -16,6 +32,11 @@ dependencies = [
     "pydantic>=2.0",
     "click>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JorgeHSantana/Pythia"
+Repository = "https://github.com/JorgeHSantana/Pythia"
+"Bug Tracker" = "https://github.com/JorgeHSantana/Pythia/issues"
 
 [project.scripts]
 pythia = "pythia.cli:app"
