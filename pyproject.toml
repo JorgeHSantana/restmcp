@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pythia"
+name = "pythia-mcp"
 version = "0.1.0"
 description = "Python framework for building MCP servers with a layered architecture and REST compatibility"
 readme = "README.md"
@@ -43,3 +43,6 @@ pythia = "pythia.cli:app"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "httpx>=0.24"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pythia"]
