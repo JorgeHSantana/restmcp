@@ -1,9 +1,9 @@
-# Pythia
+# mcp-py
 
-> The Oracle answers. Your server too.
+> Build MCP servers the Python way.
 
 Python framework for building **MCP servers** with a layered architecture and REST compatibility.  
-Pythia turns annotated classes into MCP tools and HTTP endpoints: auto-registered, dependency-injected, sync/async agnostic.
+Annotated classes become MCP tools and HTTP endpoints: auto-registered, dependency-injected, sync/async agnostic.
 
 ---
 
