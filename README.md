@@ -1,5 +1,7 @@
 # restmcp
 
+[![codecov](https://codecov.io/gh/JorgeHSantana/restmcp/branch/main/graph/badge.svg)](https://codecov.io/gh/JorgeHSantana/restmcp)
+
 > One framework. MCP tools and REST endpoints, auto-registered.
 
 Python framework for building **MCP servers** with a layered architecture and REST compatibility.  
