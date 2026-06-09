@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pythia-mcp"
+name = "mcp-py"
 version = "0.1.0"
 description = "Python framework for building MCP servers with a layered architecture and REST compatibility"
 readme = "README.md"

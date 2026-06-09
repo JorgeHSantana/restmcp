@@ -30,7 +30,7 @@ Each layer knows only the layer directly below it. Every class name is suffix-en
 ## Installation
 
 ```bash
-pip install pythia-mcp
+pip install mcp-py
 ```
 
 ---
