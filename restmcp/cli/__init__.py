@@ -1,5 +1,5 @@
 import click
-from pythia.cli.new import new_command
+from restmcp.cli.new import new_command
 
 
 @click.group()

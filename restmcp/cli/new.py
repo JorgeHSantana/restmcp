@@ -4,7 +4,7 @@ import click
 TEMPLATE_DIRS = ["datasource", "models", "repositories", "services", "tools", "urls"]
 
 MAIN_PY = """\
-from pythia import Server
+from restmcp import Server
 import urls  # auto-discovery
 
 server = Server.get_instance()

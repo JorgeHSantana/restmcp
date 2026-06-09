@@ -1,7 +1,7 @@
 import copy
 from abc import ABC, abstractmethod
 
-from pythia.datasource import DataSource
+from restmcp.datasource import DataSource
 
 
 class Repository(ABC):

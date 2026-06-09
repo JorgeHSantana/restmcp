@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pythia import Service
+from restmcp import Service
 from example.repositories.posts import PostsRepository
 from example.repositories.posts_async import AsyncPostsRepository
 

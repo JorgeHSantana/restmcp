@@ -1,7 +1,7 @@
 import copy
 from abc import ABC
 
-from pythia.repository import Repository
+from restmcp.repository import Repository
 
 
 class Service(ABC):

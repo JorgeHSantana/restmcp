@@ -1,4 +1,4 @@
-from pythia import Server
+from restmcp import Server
 import example.urls  # auto-discovery de todos os endpoints
 
 server = Server.get_instance()

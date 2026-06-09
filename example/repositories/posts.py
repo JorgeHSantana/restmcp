@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pythia import Repository
+from restmcp import Repository
 from example.datasource.posts_sync import SyncPostsDataSource
 from example.models.post import PostEntity
 

@@ -1,12 +1,12 @@
 import pytest
 from starlette.testclient import TestClient
 
-from pythia.datasource import DataSource
-from pythia.endpoint import Endpoint
-from pythia.exceptions import NotFoundError, ValidationError
-from pythia.repository import Repository
-from pythia.server import Server
-from pythia.service import Service
+from restmcp.datasource import DataSource
+from restmcp.endpoint import Endpoint
+from restmcp.exceptions import NotFoundError, ValidationError
+from restmcp.repository import Repository
+from restmcp.server import Server
+from restmcp.service import Service
 
 
 # --- helpers ---

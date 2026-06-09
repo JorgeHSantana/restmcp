@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pythia import Endpoint
+from restmcp import Endpoint
 from example.services.posts import AsyncPostsService, PostsService
 
 

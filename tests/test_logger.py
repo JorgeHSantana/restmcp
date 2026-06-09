@@ -1,5 +1,5 @@
 import logging
-from pythia.logging import Logger
+from restmcp.logging import Logger
 
 
 def test_logger_instantiation():

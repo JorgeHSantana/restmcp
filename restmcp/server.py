@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
-from pythia.rest import RestApp
-from pythia.mcp import McpApp
+from restmcp.rest import RestApp
+from restmcp.mcp import McpApp
 
 
 class Server:

@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 import requests
-from pythia import DataSource
+from restmcp import DataSource
 
 
 class SyncPostsDataSource(DataSource):

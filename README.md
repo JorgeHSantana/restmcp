@@ -38,7 +38,7 @@ pip install restmcp
 ## Quick start
 
 ```bash
-pythia new my-server
+restmcp new my-server
 cd my-server
 pip install -e .
 python main.py
@@ -91,7 +91,7 @@ Abstracts the connection to an external data source (REST API, database, file).
 
 ```python
 import httpx
-from pythia import DataSource
+from restmcp import DataSource
 
 class ProductApiDataSource(DataSource):
     base_url = "https://api.example.com"
@@ -111,7 +111,7 @@ Structured domain data backed by Pydantic. Automatic type validation.
 **Rule:** class name must end with `Entity`.
 
 ```python
-from pythia import Entity
+from restmcp import Entity
 
 class ProductEntity(Entity):
     id:    str
@@ -127,7 +127,7 @@ Fetches data via a `DataSource` and returns `Entity` objects. One source, one da
 **Rules:** name ends with `Repository`; must declare `data_source` as class attribute; must implement `get()`.
 
 ```python
-from pythia import Repository
+from restmcp import Repository
 from datasource.product_api import ProductApiDataSource
 from models.product import ProductEntity
 
@@ -156,7 +156,7 @@ Orchestrates business logic. Where joins, transformations, and multi-source rule
 **Rules:** name ends with `Service`; must declare at least one `Repository` as class attribute.
 
 ```python
-from pythia import Service
+from restmcp import Service
 from repositories.product import ProductRepository
 
 class GetProductService(Service):
@@ -184,7 +184,7 @@ HTTP + MCP route. **Auto-registers on class definition**: no manual wiring neede
 **Rules:** name ends with `Endpoint`; must declare `mcp_definition`, `url`, `method`, and `callback`.
 
 ```python
-from pythia import Endpoint
+from restmcp import Endpoint
 from services.product import GetProductService
 
 class GetProductEndpoint(Endpoint):
@@ -228,7 +228,7 @@ class GetUserEndpoint(BaseAuthEndpoint):
 # ↑ registered automatically: all required attributes present
 ```
 
-**Sync and async callbacks** are both supported: pythia detects and handles either:
+**Sync and async callbacks** are both supported: restmcp detects and handles either:
 
 ```python
 # sync: runs in a thread pool, does not block the event loop
@@ -259,7 +259,7 @@ async def callback(self, product_id: str) -> dict:
 Singleton with dual-mode: HTTP via FastAPI/uvicorn or MCP protocol via FastMCP.
 
 ```python
-from pythia import Server
+from restmcp import Server
 import urls  # triggers auto-discovery of all endpoint modules
 
 server = Server.get_instance()
@@ -288,7 +288,7 @@ mcp = server.get_mcp()
 Raised inside `callback`: caught by `Endpoint` and converted to HTTP responses automatically.
 
 ```python
-from pythia import ValidationError, NotFoundError
+from restmcp import ValidationError, NotFoundError
 
 raise ValidationError("product_id is required")  # → HTTP 400
 raise NotFoundError("Product not found")          # → HTTP 404
@@ -305,7 +305,7 @@ graph TD
 ## Testing with injection
 
 ```python
-from pythia import DataSource
+from restmcp import DataSource
 from repositories.product import ProductRepository
 from services.product import GetProductService
 

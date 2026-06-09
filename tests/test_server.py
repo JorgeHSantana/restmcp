@@ -1,7 +1,7 @@
 import pytest
 from starlette.testclient import TestClient
-from pythia.endpoint import Endpoint
-from pythia.server import Server
+from restmcp.endpoint import Endpoint
+from restmcp.server import Server
 
 
 def test_server_is_singleton():

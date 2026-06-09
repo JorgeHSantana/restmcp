@@ -2,7 +2,7 @@ import sys
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
 
-from pythia.mcp import McpApp, _JSON_TO_PYTHON
+from restmcp.mcp import McpApp, _JSON_TO_PYTHON
 
 
 # --- helpers ---

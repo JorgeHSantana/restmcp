@@ -1,4 +1,4 @@
-from pythia import Entity
+from restmcp import Entity
 
 
 class PostEntity(Entity):

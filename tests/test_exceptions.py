@@ -1,5 +1,5 @@
 import pytest
-from pythia.exceptions import ValidationError, NotFoundError, PythiaException
+from restmcp.exceptions import ValidationError, NotFoundError, PythiaException
 
 
 def test_validation_error_status_code():

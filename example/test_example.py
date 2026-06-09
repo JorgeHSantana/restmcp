@@ -15,7 +15,7 @@ import sys
 import importlib
 import pytest
 from starlette.testclient import TestClient
-from pythia.server import Server
+from restmcp.server import Server
 
 
 def _setup_endpoints():
@@ -165,7 +165,7 @@ class TestDependencyInjection:
     """
 
     def test_sync_service_with_mock(self):
-        from pythia import DataSource, Repository
+        from restmcp import DataSource, Repository
         from example.services.posts import PostsService
         from example.models.post import PostEntity
 
@@ -188,7 +188,7 @@ class TestDependencyInjection:
 
     def test_async_service_with_mock(self):
         import asyncio
-        from pythia import DataSource, Repository
+        from restmcp import DataSource, Repository
         from example.services.posts import AsyncPostsService
         from example.models.post import PostEntity
 

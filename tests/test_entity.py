@@ -1,5 +1,5 @@
 import pytest
-from pythia.entity import Entity
+from restmcp.entity import Entity
 
 
 def test_valid_entity_subclass():

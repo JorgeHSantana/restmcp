@@ -2,7 +2,7 @@ import asyncio
 from typing import List
 
 import httpx
-from pythia import DataSource
+from restmcp import DataSource
 
 
 class AsyncPostsDataSource(DataSource):

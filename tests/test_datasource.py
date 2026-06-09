@@ -1,5 +1,5 @@
 import pytest
-from pythia.datasource import DataSource
+from restmcp.datasource import DataSource
 
 
 def test_valid_datasource_subclass():

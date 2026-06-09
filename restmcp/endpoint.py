@@ -5,7 +5,7 @@ from abc import ABC
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
-from pythia.exceptions import PythiaException, ValidationError
+from restmcp.exceptions import PythiaException, ValidationError
 
 
 def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
@@ -107,8 +107,8 @@ class Endpoint(ABC):
             }, status_code=500)
 
     def __init__(self):
-        from pythia.server import Server
-        from pythia.rest import _auth_dependency
+        from restmcp.server import Server
+        from restmcp.rest import _auth_dependency
 
         self.mcp_definition = getattr(self, "mcp_definition", None)
         if not self.mcp_definition:

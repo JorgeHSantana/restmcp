@@ -1,7 +1,7 @@
 import os
 import pytest
 from click.testing import CliRunner
-from pythia.cli import app
+from restmcp.cli import app
 
 
 @pytest.fixture

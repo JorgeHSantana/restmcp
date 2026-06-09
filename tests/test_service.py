@@ -1,7 +1,7 @@
 import pytest
-from pythia.service import Service
-from pythia.repository import Repository
-from pythia.datasource import DataSource
+from restmcp.service import Service
+from restmcp.repository import Repository
+from restmcp.datasource import DataSource
 
 
 class FakeDataSource(DataSource):
