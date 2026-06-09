@@ -42,7 +42,7 @@ Repository = "https://github.com/JorgeHSantana/restmcp"
 restmcp = "restmcp.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "httpx>=0.24"]
+dev = ["pytest", "pytest-cov", "httpx>=0.24", "requests>=2.28"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["restmcp"]
