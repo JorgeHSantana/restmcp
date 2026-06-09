@@ -1,6 +1,6 @@
-# mcp-py
+# restmcp
 
-> Build MCP servers the Python way.
+> One framework. MCP tools and REST endpoints, auto-registered.
 
 Python framework for building **MCP servers** with a layered architecture and REST compatibility.  
 Annotated classes become MCP tools and HTTP endpoints: auto-registered, dependency-injected, sync/async agnostic.
@@ -30,7 +30,7 @@ Each layer knows only the layer directly below it. Every class name is suffix-en
 ## Installation
 
 ```bash
-pip install mcp-py
+pip install restmcp
 ```
 
 ---
