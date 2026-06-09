@@ -1,14 +1,14 @@
 """
-Exemplo de uso do pythia — sync vs async
+pythia usage example — sync vs async
 
-Patterns demonstrados:
-  1. Sync callback  → roda em thread pool (via run_in_executor), não bloqueia o event loop
-  2. Async callback → awaited diretamente no event loop
-  3. Async paralelo → asyncio.gather dentro do DataSource (múltiplas requisições simultâneas)
-  4. Injeção de dependência → Service(repo=MockRepository()) isola testes da rede
+Patterns demonstrated:
+  1. Sync callback    → runs in thread pool (via run_in_executor), does not block the event loop
+  2. Async callback   → awaited directly on the event loop
+  3. Parallel async   → asyncio.gather inside the DataSource (multiple simultaneous requests)
+  4. Dependency injection → Service(repo=MockRepository()) isolates tests from the network
 
-Todos os endpoints são registrados automaticamente ao importar example.urls.
-O TestClient do Starlette executa requisições síncronas contra a ASGI app — sem servidor real.
+All endpoints are registered automatically when example.urls is imported.
+Starlette's TestClient executes synchronous requests against the ASGI app — no real server needed.
 """
 
 import sys
@@ -19,7 +19,7 @@ from pythia.server import Server
 
 
 def _setup_endpoints():
-    """Limpa cache e re-importa para reregistrar endpoints após Server._reset()."""
+    """Clear module cache and re-import to re-register endpoints after Server._reset()."""
     for key in list(sys.modules.keys()):
         if "example" in key:
             del sys.modules[key]
@@ -44,12 +44,12 @@ def client():
 
 class TestSyncEndpoint:
     """
-    GetPostEndpoint usa `def callback` (sync).
-    O pythia detecta via inspect.iscoroutinefunction() e chama:
+    GetPostEndpoint uses `def callback` (sync).
+    pythia detects it via inspect.iscoroutinefunction() and calls:
         loop.run_in_executor(None, lambda: self.callback(**params))
 
-    O event loop não bloqueia. A thread pool do Python lida com a espera
-    do requests.get().
+    The event loop is not blocked. Python's thread pool handles the
+    blocking requests.get() call.
     """
 
     def test_get_post_returns_correct_fields(self):
@@ -64,7 +64,7 @@ class TestSyncEndpoint:
         assert "userId" in post
 
     def test_get_post_validates_entity(self):
-        """PostEntity (Pydantic) garante tipos corretos."""
+        """PostEntity (Pydantic) enforces correct types."""
         response = client().post("/posts/get", json={"post_id": 5})
         post = response.json()["result"]
         assert isinstance(post["id"], int)
@@ -76,7 +76,7 @@ class TestSyncEndpoint:
         data = response.json()
         assert data["success"] is True
         posts = data["result"]
-        assert len(posts) == 100  # JSONPlaceholder retorna 100 posts
+        assert len(posts) == 100  # JSONPlaceholder returns 100 posts
 
     def test_list_posts_filtered_by_user(self):
         response = client().post("/posts/list", json={"user_id": 1})
@@ -96,12 +96,12 @@ class TestSyncEndpoint:
 
 class TestAsyncEndpoint:
     """
-    GetPostAsyncEndpoint usa `async def callback`.
-    O pythia detecta e chama:
+    GetPostAsyncEndpoint uses `async def callback`.
+    pythia detects it and calls:
         result = await self.callback(**params)
 
-    httpx.AsyncClient faz a requisição sem bloquear o event loop.
-    Ideal quando o mesmo request precisa fazer múltiplas chamadas sequenciais.
+    httpx.AsyncClient makes the request without blocking the event loop.
+    Best suited when a single request needs multiple sequential async calls.
     """
 
     def test_get_post_async_returns_same_data_as_sync(self):
@@ -120,16 +120,16 @@ class TestAsyncEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# 3. ASYNC paralelo — asyncio.gather
+# 3. PARALLEL async — asyncio.gather
 # ---------------------------------------------------------------------------
 
 class TestAsyncParallel:
     """
-    GetManyPostsAsyncEndpoint busca múltiplos posts em paralelo.
-    O DataSource usa asyncio.gather para disparar todas as requisições
-    simultaneamente — o tempo total é o do POST mais lento, não a soma.
+    GetManyPostsAsyncEndpoint fetches multiple posts in parallel.
+    The DataSource uses asyncio.gather to fire all requests simultaneously —
+    total time equals the slowest single request, not the sum of all.
 
-    Exemplo: buscar 5 posts leva ~200ms em paralelo vs ~1000ms em sequência.
+    Example: fetching 5 posts takes ~200ms in parallel vs ~1000ms sequentially.
     """
 
     def test_get_many_returns_all_requested_posts(self):
@@ -155,13 +155,13 @@ class TestAsyncParallel:
 
 
 # ---------------------------------------------------------------------------
-# 4. Injeção de dependência — mock no DataSource (sem rede)
+# 4. Dependency injection — mocked DataSource (no network)
 # ---------------------------------------------------------------------------
 
 class TestDependencyInjection:
     """
-    O padrão de injeção do pythia: Service(repo=MockRepository())
-    Isola o teste da rede — zero chamadas HTTP.
+    pythia's injection pattern: Service(repo=MockRepository())
+    Isolates the test from the network — zero HTTP calls.
     """
 
     def test_sync_service_with_mock(self):

@@ -4,17 +4,17 @@ from pythia import Endpoint
 from example.services.posts import AsyncPostsService, PostsService
 
 
-# --- SYNC: callback usa requests, roda em thread pool automaticamente ---
+# --- SYNC: callback uses requests, runs in thread pool automatically ---
 
 class GetPostEndpoint(Endpoint):
     url = "/posts/get"
     method = "POST"
     mcp_definition = {
         "name": "get_post",
-        "description": "Busca um post pelo ID (sync — usa requests)",
+        "description": "Fetch a post by ID (sync — uses requests)",
         "parameters": {
             "properties": {
-                "post_id": {"type": "integer", "description": "ID do post (1-100)"}
+                "post_id": {"type": "integer", "description": "Post ID (1-100)"}
             }
         },
     }
@@ -28,10 +28,10 @@ class ListPostsEndpoint(Endpoint):
     method = "POST"
     mcp_definition = {
         "name": "list_posts",
-        "description": "Lista posts, com filtro opcional por userId (sync)",
+        "description": "List posts with optional userId filter (sync)",
         "parameters": {
             "properties": {
-                "user_id": {"type": "integer", "description": "Filtrar por usuário (opcional)", "default": None}
+                "user_id": {"type": "integer", "description": "Filter by user (optional)", "default": None}
             }
         },
     }
@@ -40,17 +40,17 @@ class ListPostsEndpoint(Endpoint):
         return PostsService().list_posts(user_id=user_id)
 
 
-# --- ASYNC: callback usa httpx, roda no event loop diretamente ---
+# --- ASYNC: callback uses httpx, runs on the event loop directly ---
 
 class GetPostAsyncEndpoint(Endpoint):
     url = "/posts/get-async"
     method = "POST"
     mcp_definition = {
         "name": "get_post_async",
-        "description": "Busca um post pelo ID (async — usa httpx)",
+        "description": "Fetch a post by ID (async — uses httpx)",
         "parameters": {
             "properties": {
-                "post_id": {"type": "integer", "description": "ID do post (1-100)"}
+                "post_id": {"type": "integer", "description": "Post ID (1-100)"}
             }
         },
     }
@@ -64,10 +64,10 @@ class GetManyPostsAsyncEndpoint(Endpoint):
     method = "POST"
     mcp_definition = {
         "name": "get_many_posts",
-        "description": "Busca vários posts em paralelo com asyncio.gather (async)",
+        "description": "Fetch multiple posts in parallel using asyncio.gather (async)",
         "parameters": {
             "properties": {
-                "post_ids": {"type": "array", "items": {"type": "integer"}, "description": "Lista de IDs"}
+                "post_ids": {"type": "array", "items": {"type": "integer"}, "description": "List of post IDs"}
             }
         },
     }

@@ -39,7 +39,7 @@ def test_register_url_handler():
     class FakeHandler:
         mcp_definition = {
             "name": "fake_tool",
-            "description": "tool de teste",
+            "description": "test tool",
             "parameters": {"properties": {}},
         }
 
@@ -54,7 +54,7 @@ def test_mcp_tools_lists_registered_handler():
     class FakeHandler:
         mcp_definition = {
             "name": "my_tool",
-            "description": "descrição",
+            "description": "description",
             "parameters": {"properties": {}},
         }
 
