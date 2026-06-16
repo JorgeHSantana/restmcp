@@ -20,6 +20,7 @@ class Server:
             return
         self._rest = RestApp()
         self._mcp = McpApp()
+        self._mcp_instance = None
         self._initialized = True
 
     @property
@@ -38,7 +39,20 @@ class Server:
         uvicorn.run(self.app, host=host, port=port, reload=reload)
 
     def get_mcp(self):
-        return self._mcp.build(self.url_handlers)
+        """Return the underlying FastMCP instance (built once, then memoized).
+
+        This is the raw FastMCP object — an escape hatch for advanced use. The
+        coupling to FastMCP leaks through here on purpose for now.
+
+        TODO(decouple-mcp): hide FastMCP behind a restmcp-owned protocol so a
+        FastMCP major bump (3.x -> 4.x) cannot break callers. The whole
+        dependency is already contained in mcp.py + asgi_app(); the remaining
+        leak is this return type and asgi_app's reliance on `http_app`/
+        `.lifespan`. See issue (full MCP decoupling).
+        """
+        if self._mcp_instance is None:
+            self._mcp_instance = self._mcp.build(self.url_handlers)
+        return self._mcp_instance
 
     def asgi_app(
         self,
@@ -58,8 +72,8 @@ class Server:
         protecting REST and the mounted MCP; `public_paths` stay open (the REST
         `/health` and `/mcp/tools` routes by default).
 
-        Call this at most once per process: each call builds a fresh FastMCP
-        instance via get_mcp().
+        Idempotent: get_mcp() memoizes the FastMCP instance, so calling this
+        more than once reuses the same underlying MCP server.
         """
         import os
         from starlette.applications import Starlette

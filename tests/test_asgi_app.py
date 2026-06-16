@@ -25,3 +25,23 @@ def test_asgi_app_serve_rest_e_mcp(monkeypatch):
         r = c.post("/mcp-protocol/", json=init,
                    headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 200                            # MCP handshake (lifespan OK)
+
+
+def test_get_mcp_memoized_and_asgi_app_idempotent(monkeypatch):
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    server = Server.get_instance()
+
+    class PongEndpoint(Endpoint):
+        mcp_definition = {"name": "pong", "description": "ping",
+                          "parameters": {"properties": {}}}
+        url = "/mcp/tools/pong"
+        method = "POST"
+
+        def callback(self):
+            return {"ping": True}
+
+    # get_mcp() builds once and reuses the same FastMCP instance.
+    assert server.get_mcp() is server.get_mcp()
+    # asgi_app() can be called more than once without raising.
+    assert server.asgi_app() is not None
+    assert server.asgi_app() is not None

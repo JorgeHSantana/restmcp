@@ -13,6 +13,11 @@ _JSON_TO_PYTHON = {
 class McpApp:
     """Builds a FastMCP instance from registered url_handlers, mapping mcp_definition to typed pydantic tool wrappers."""
 
+    # TODO(decouple-mcp): this class and Server.asgi_app() are the only points
+    # touching fastmcp. To fully decouple, introduce a restmcp-owned protocol
+    # (e.g. McpBackend with build()/http_app()/lifespan) and make FastMCP one
+    # implementation, so a FastMCP major bump can't break callers. See the
+    # tracking issue for the full plan and trade-offs.
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
