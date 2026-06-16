@@ -104,3 +104,28 @@ def build_parameters(callback) -> dict:
         properties[pname] = schema
 
     return {"properties": properties}
+
+
+def _first_doc_line(obj) -> str | None:
+    doc = inspect.getdoc(obj)
+    if doc and doc.strip():
+        return doc.strip().splitlines()[0].strip()
+    return None
+
+
+def build_mcp_definition(cls) -> dict:
+    """Infer the full ``mcp_definition`` dict for an Endpoint subclass.
+
+    name        -> tool_name_from_class(cls)
+    description -> first line of the callback docstring, then the class
+                   docstring, then the tool name
+    parameters  -> build_parameters(callback)
+    """
+    callback = vars(cls).get("callback") or getattr(cls, "callback", None)
+    name = tool_name_from_class(cls)
+    description = _first_doc_line(callback) or _first_doc_line(cls) or name
+    return {
+        "name": name,
+        "description": description,
+        "parameters": build_parameters(callback) if callback else {"properties": {}},
+    }

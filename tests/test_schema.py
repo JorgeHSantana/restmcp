@@ -88,3 +88,35 @@ def test_build_parameters_unwraps_optional():
 
     props = build_parameters(callback)["properties"]
     assert props["when"] == {"type": "string", "default": None}
+
+
+from restmcp.schema import build_mcp_definition
+
+
+def test_build_mcp_definition_uses_docstring_and_signature():
+    class GetWidgetEndpoint:
+        def callback(self, widget_id: Annotated[int, "Widget id"]) -> dict:
+            """Return one widget by id."""
+            ...
+
+    definition = build_mcp_definition(GetWidgetEndpoint)
+    assert definition == {
+        "name": "get_widget",
+        "description": "Return one widget by id.",
+        "parameters": {
+            "properties": {
+                "widget_id": {"type": "integer", "description": "Widget id"},
+            }
+        },
+    }
+
+
+def test_build_mcp_definition_description_falls_back_to_name():
+    class PingEndpoint:
+        def callback(self) -> dict:
+            ...
+
+    definition = build_mcp_definition(PingEndpoint)
+    assert definition["name"] == "ping"
+    assert definition["description"] == "ping"
+    assert definition["parameters"] == {"properties": {}}
