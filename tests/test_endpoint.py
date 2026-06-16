@@ -80,14 +80,14 @@ def test_mcp_definition_bad_properties_raises():
 
 # --- validation errors on missing attributes ---
 
-def test_endpoint_requires_mcp_definition():
-    class NoDefEndpoint(Endpoint):
+def test_endpoint_infers_mcp_definition_when_absent():
+    class InferDefEndpoint(Endpoint):
         url = "/x"
         method = "POST"
         def callback(self): pass
 
-    with pytest.raises(ValueError, match="mcp_definition"):
-        NoDefEndpoint()
+    handler = Server.get_instance().url_handlers[-1]
+    assert handler.mcp_definition["name"] == "infer_def"
 
 
 def test_endpoint_requires_url():

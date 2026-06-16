@@ -183,28 +183,26 @@ Repository class attributes are auto-discovered via MRO and isolated per instanc
 ### `Endpoint`
 
 HTTP + MCP route. **Auto-registers on class definition**: no manual wiring needed.  
-**Rules:** name ends with `Endpoint`; must declare `mcp_definition`, `url`, `method`, and `callback`.
+**Rules:** name ends with `Endpoint`; must declare `url`, `method`, and `callback`. `mcp_definition` is inferred from the callback when omitted.
 
 ```python
+from typing import Annotated
+
 from restmcp import Endpoint
 from services.product import GetProductService
 
 class GetProductEndpoint(Endpoint):
-    mcp_definition = {
-        "name":        "get_product",
-        "description": "Returns a product by ID",
-        "parameters": {
-            "properties": {
-                "product_id": {"type": "string", "description": "Product ID"},
-            },
-        },
-    }
     url    = "/api/get-product"
     method = "POST"
 
-    async def callback(self, product_id: str) -> dict:
+    async def callback(self, product_id: Annotated[str, "Product ID"]) -> dict:
+        """Returns a product by ID."""
         return await GetProductService().execute(product_id)
 ```
+
+The MCP tool name (`get_product`), description (the docstring's first line), and
+parameter schema (types + `Annotated` text) are inferred from the `callback`. Set
+`mcp_definition` explicitly only when you need to override the inferred schema.
 
 Defining the class is enough. The route is registered on the `Server` singleton the moment Python processes the class body.
 
@@ -222,12 +220,12 @@ class GetProductEndpoint(Endpoint):
 class BaseAuthEndpoint(Endpoint):
     method = "POST"
     def callback(self, **kwargs): ...
-# ↑ not registered: url and mcp_definition are missing
+# ↑ not registered: url is missing
 
 class GetUserEndpoint(BaseAuthEndpoint):
-    mcp_definition = { ... }
     url = "/api/get-user"
-# ↑ registered automatically: all required attributes present
+    def callback(self, user_id: str) -> dict: ...
+# ↑ registered automatically: url, method, and callback all present
 ```
 
 **Sync and async callbacks** are both supported: restmcp detects and handles either:

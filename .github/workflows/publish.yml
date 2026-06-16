@@ -51,3 +51,29 @@ jobs:
       - run: pip install build
       - run: python -m build
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read version
+        id: ver
+        run: echo "version=$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - name: Tag and publish a GitHub Release (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.ver.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists — skipping."
+          else
+            gh release create "$tag" \
+              --title "$tag" \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          fi
