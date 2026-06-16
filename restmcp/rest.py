@@ -7,8 +7,8 @@ from starlette.middleware.cors import CORSMiddleware
 
 
 def _validate_api_key(raw_key: str) -> bool:
-    env_keys = os.getenv("AUTH_API_KEY", "")
-    return bool(raw_key) and raw_key in [k.strip() for k in env_keys.split(",") if k.strip()]
+    from restmcp.auth import _valid_token
+    return _valid_token(raw_key)
 
 
 def _auth_dependency(request: Request):

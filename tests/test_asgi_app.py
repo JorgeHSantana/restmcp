@@ -2,7 +2,8 @@ from starlette.testclient import TestClient
 from restmcp import Server, Endpoint
 
 
-def test_asgi_app_serve_rest_e_mcp():
+def test_asgi_app_serve_rest_e_mcp(monkeypatch):
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
     server = Server.get_instance()
 
     class PingEndpoint(Endpoint):
