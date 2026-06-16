@@ -6,6 +6,14 @@ from fastapi import FastAPI, HTTPException, Request
 from starlette.middleware.cors import CORSMiddleware
 
 
+def _package_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("restmcp")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 def _validate_api_key(raw_key: str) -> bool:
     from restmcp.auth import _valid_token
     return _valid_token(raw_key)
@@ -49,7 +57,7 @@ class RestApp:
                     for h in self.url_handlers
                 ],
                 "server": "restmcp",
-                "version": "0.1.0",
+                "version": _package_version(),
             }
 
         @self.app.get("/health")
