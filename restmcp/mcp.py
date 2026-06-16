@@ -21,7 +21,7 @@ class McpApp:
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
-        mcp = FastMCP("pythia")
+        mcp = FastMCP("restmcp")
         for handler in url_handlers:
             self._register_tool(mcp, handler)
         return mcp

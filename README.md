@@ -55,7 +55,7 @@ my-server/
 ├── repositories/      # data access layer
 ├── services/          # business logic
 ├── tools/             # internal utilities
-├── urls/              # endpoint definitions (auto-discovery)
+├── endpoints/         # endpoint definitions (auto-discovery)
 ├── main.py
 └── pyproject.toml
 ```
@@ -270,21 +270,27 @@ blocking calls inside an `async def` callback.
 
 ### `Server`
 
-Singleton with dual-mode: HTTP via FastAPI/uvicorn or MCP protocol via FastMCP.
+Singleton serving REST (FastAPI/uvicorn) and the MCP protocol (FastMCP) from one
+codebase. The recommended entry point is `asgi_app()`, which mounts both:
 
 ```python
-from restmcp import Server
-import urls  # triggers auto-discovery of all endpoint modules
+import uvicorn
 
-server = Server.get_instance()
+from restmcp import Server
+import endpoints  # triggers auto-discovery of all endpoint modules
+
+app = Server.get_instance().asgi_app()  # REST at "/", MCP at "/mcp-protocol/"
 
 if __name__ == "__main__":
-    server.start(host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 ```python
-# MCP mode
-mcp = server.get_mcp()
+# REST only (no MCP), if that is all you need:
+Server.get_instance().start(host="0.0.0.0", port=5000)
+
+# The raw FastMCP instance (escape hatch):
+mcp = Server.get_instance().get_mcp()
 ```
 
 **Built-in routes:**

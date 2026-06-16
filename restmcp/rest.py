@@ -48,7 +48,7 @@ class RestApp:
                     }
                     for h in self.url_handlers
                 ],
-                "server": "pythia",
+                "server": "restmcp",
                 "version": "0.1.0",
             }
 
