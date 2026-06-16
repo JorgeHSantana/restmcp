@@ -18,10 +18,12 @@ import os
 
 import uvicorn
 
-# Importing the package runs every endpoint module, which registers each
-# Endpoint on the Server singleton at class-definition time.
-import endpoints  # noqa: F401  (import has the side effect of registering routes)
-from restmcp import Server
+from restmcp import Server, autodiscover
+
+# Import every module under endpoints/, which registers each Endpoint on the
+# Server singleton at class-definition time. Drop a new file in endpoints/ and
+# it goes live on the next start — no list to maintain.
+autodiscover("endpoints")
 
 
 def build_app():

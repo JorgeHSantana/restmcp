@@ -3,7 +3,7 @@
 from restmcp import Endpoint, ValidationError
 
 from services.battery import BatteryHealthService
-from tools.dates import coerce_reference_date
+from utils.dates import coerce_reference_date
 
 
 class CheckBatteryEndpoint(Endpoint):

@@ -50,12 +50,12 @@ Generated structure:
 
 ```
 my-server/
-├── datasource/        # external connections (APIs, databases)
-├── models/            # domain entities (Pydantic)
+├── datasources/       # external connections (APIs, databases)
+├── entities/          # domain models (Pydantic)
 ├── repositories/      # data access layer
 ├── services/          # business logic
-├── tools/             # internal utilities
-├── endpoints/         # endpoint definitions (auto-discovery)
+├── utils/             # internal helpers
+├── endpoints/         # endpoint definitions (auto-discovered)
 ├── main.py
 └── pyproject.toml
 ```
@@ -130,8 +130,8 @@ Fetches data via a `DataSource` and returns `Entity` objects. One source, one da
 
 ```python
 from restmcp import Repository
-from datasource.product_api import ProductApiDataSource
-from models.product import ProductEntity
+from datasources.product_api import ProductApiDataSource
+from entities.product import ProductEntity
 
 class ProductRepository(Repository):
     data_source = ProductApiDataSource()
@@ -276,8 +276,9 @@ codebase. The recommended entry point is `asgi_app()`, which mounts both:
 ```python
 import uvicorn
 
-from restmcp import Server
-import endpoints  # triggers auto-discovery of all endpoint modules
+from restmcp import Server, autodiscover
+
+autodiscover("endpoints")  # imports every endpoint module so each one registers
 
 app = Server.get_instance().asgi_app()  # REST at "/", MCP at "/mcp-protocol/"
 

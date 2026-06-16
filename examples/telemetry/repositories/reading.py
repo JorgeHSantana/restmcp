@@ -11,8 +11,8 @@ import datetime as dt
 
 from restmcp import Repository
 
-from datasource import TelemetryDataSource
-from models.reading import DeviceReadingEntity
+from datasources.telemetry import TelemetryDataSource
+from entities.reading import DeviceReadingEntity
 
 
 class ReadingRepository(Repository):

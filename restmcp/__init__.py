@@ -8,6 +8,7 @@ from restmcp.logging import Logger
 from restmcp.exceptions import ValidationError, NotFoundError
 from restmcp.types import McpDefinition
 from restmcp.cache import cached_method
+from restmcp.discovery import autodiscover
 
 __all__ = [
     "DataSource",
@@ -21,4 +22,5 @@ __all__ = [
     "NotFoundError",
     "McpDefinition",
     "cached_method",
+    "autodiscover",
 ]

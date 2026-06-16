@@ -10,8 +10,8 @@ fleet in memory, so `python main.py` just works.
 
 | Feature | Where |
 |---|---|
-| `DataSource` (swap for a real DB later) | [datasource/__init__.py](datasource/__init__.py) |
-| `Entity` + custom `serialize()` | [models/reading.py](models/reading.py) |
+| `DataSource` (swap for a real DB later) | [datasources/telemetry.py](datasources/telemetry.py) |
+| `Entity` + custom `serialize()` | [entities/reading.py](entities/reading.py) |
 | `Repository` with dependency injection | [repositories/reading.py](repositories/reading.py) |
 | `Service` orchestration | [services/battery.py](services/battery.py) |
 | `cached_method(ttl=...)` (works with list args) | [services/battery.py](services/battery.py) |
@@ -21,7 +21,7 @@ fleet in memory, so `python main.py` just works.
 | `NotFoundError` / `ValidationError` → HTTP 404/400 | [endpoints/get_device.py](endpoints/get_device.py) |
 | One ASGI app for REST **and** MCP via `asgi_app()` | [main.py](main.py) |
 | Bearer auth over REST + MCP (`AUTH_API_KEY`) | [main.py](main.py) |
-| Dependency-injection testing | [test_example.py](test_example.py) |
+| Dependency-injection testing | [test_telemetry.py](test_telemetry.py) |
 
 ## Run it
 
@@ -99,7 +99,7 @@ python -m pytest        # injects a fake DataSource — no server, no network
 
 ## Make it real
 
-Replace [datasource/__init__.py](datasource/__init__.py) with a class that talks
+Replace [datasources/telemetry.py](datasources/telemetry.py) with a class that talks
 to your actual database or API (it just has to return dicts). Nothing in the
 Repository, Service, or Endpoint layers changes — that is the point of the
 layering.

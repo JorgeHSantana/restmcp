@@ -19,14 +19,14 @@ def test_new_creates_directory(runner, tmp_path):
 def test_new_creates_expected_dirs(runner, tmp_path):
     with runner.isolated_filesystem(temp_dir=tmp_path):
         runner.invoke(app, ["new", "meu-server"])
-        for d in ["datasource", "models", "repositories", "services", "tools", "endpoints"]:
+        for d in ["datasources", "entities", "repositories", "services", "utils", "endpoints"]:
             assert os.path.isdir(f"meu-server/{d}"), f"Missing dir: {d}"
 
 
 def test_new_creates_init_files(runner, tmp_path):
     with runner.isolated_filesystem(temp_dir=tmp_path):
         runner.invoke(app, ["new", "meu-server"])
-        for d in ["datasource", "models", "repositories", "services", "tools", "endpoints"]:
+        for d in ["datasources", "entities", "repositories", "services", "utils", "endpoints"]:
             assert os.path.isfile(f"meu-server/{d}/__init__.py"), f"Missing __init__.py in {d}"
 
 
@@ -36,8 +36,16 @@ def test_new_creates_main_py(runner, tmp_path):
         assert os.path.isfile("meu-server/main.py")
         content = open("meu-server/main.py").read()
         assert "Server" in content
-        assert "import endpoints" in content
+        assert 'autodiscover("endpoints")' in content
         assert "asgi_app" in content
+
+
+def test_new_endpoints_init_is_empty(runner, tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        runner.invoke(app, ["new", "meu-server"])
+        # Discovery moved into autodiscover(); the generated __init__.py is a
+        # bare package marker with no import loop.
+        assert open("meu-server/endpoints/__init__.py").read().strip() == ""
 
 
 def test_new_creates_pyproject_toml(runner, tmp_path):
