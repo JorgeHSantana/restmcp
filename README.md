@@ -55,7 +55,7 @@ my-server/
 ├── repositories/      # data access layer
 ├── services/          # business logic
 ├── tools/             # internal utilities
-├── urls/              # endpoint definitions (auto-discovery)
+├── endpoints/         # endpoint definitions (auto-discovery)
 ├── main.py
 └── pyproject.toml
 ```
@@ -244,6 +244,18 @@ async def callback(self, product_id: str) -> dict:
         return r.json()
 ```
 
+**The contract (identical for REST and MCP):**
+
+- A **sync** callback runs in a threadpool, so blocking work — a synchronous DB
+  driver, `requests`, file I/O — never stalls the event loop. Writing your
+  `Repository`/`DataSource` synchronously is the simple, correct default.
+- An **async** callback is awaited directly. Inside it, **keep the I/O async**
+  (`httpx`, an async DB driver): calling blocking code from an async callback
+  *does* stall the loop, because it is not moved to a thread.
+
+Rule of thumb: sync all the way down, or async all the way down — don't put
+blocking calls inside an `async def` callback.
+
 **Response format:**
 
 ```json
@@ -258,21 +270,27 @@ async def callback(self, product_id: str) -> dict:
 
 ### `Server`
 
-Singleton with dual-mode: HTTP via FastAPI/uvicorn or MCP protocol via FastMCP.
+Singleton serving REST (FastAPI/uvicorn) and the MCP protocol (FastMCP) from one
+codebase. The recommended entry point is `asgi_app()`, which mounts both:
 
 ```python
-from restmcp import Server
-import urls  # triggers auto-discovery of all endpoint modules
+import uvicorn
 
-server = Server.get_instance()
+from restmcp import Server
+import endpoints  # triggers auto-discovery of all endpoint modules
+
+app = Server.get_instance().asgi_app()  # REST at "/", MCP at "/mcp-protocol/"
 
 if __name__ == "__main__":
-    server.start(host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 ```python
-# MCP mode
-mcp = server.get_mcp()
+# REST only (no MCP), if that is all you need:
+Server.get_instance().start(host="0.0.0.0", port=5000)
+
+# The raw FastMCP instance (escape hatch):
+mcp = Server.get_instance().get_mcp()
 ```
 
 **Built-in routes:**
@@ -282,6 +300,20 @@ mcp = server.get_mcp()
 | `/health` | GET | No |
 | `/mcp/tools` | GET | No |
 | _your endpoints_ | POST | Yes (if `AUTH_API_KEY` is set) |
+
+---
+
+## Production checklist
+
+- **Running REST + MCP together:** use `app = server.asgi_app()` — it mounts both and wires the FastMCP lifespan. **Do not** call `server.app.mount(...)` directly: it raises "Task group is not initialized" on the first MCP request. MCP is served at the `mcp_path` you pass (default `/mcp-protocol/`, trailing slash); REST stays at `/`.
+- **Auth:** set `AUTH_API_KEY` (Bearer). `asgi_app()` protects REST **and** the mounted MCP; `/health` and `/mcp/tools` remain public. Multiple keys: comma-separated.
+- **Serialization:** callback return values are serialized with `jsonable_encoder` — `datetime` → ISO 8601, `Decimal` → string, Pydantic models → dict, automatically. Override per-entity via `serialize()`.
+- **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
+- **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
+- **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
+- **Dependencies:** `fastmcp` 3.x is recommended (this package requires `fastmcp>=2.0`; upgrade to 3.x for full Streamable HTTP support). Installing fastmcp also pulls in `starlette`.
+
+A complete, runnable server using all of the above lives in [examples/telemetry/](examples/telemetry/) — no database required.
 
 ---
 
@@ -298,8 +330,8 @@ raise NotFoundError("Product not found")          # → HTTP 404
 
 ```mermaid
 graph TD
-    PythiaException --> ValidationError["ValidationError (400)"]
-    PythiaException --> NotFoundError["NotFoundError (404)"]
+    RestMCPException --> ValidationError["ValidationError (400)"]
+    RestMCPException --> NotFoundError["NotFoundError (404)"]
 ```
 
 ---

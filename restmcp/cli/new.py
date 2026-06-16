@@ -1,24 +1,33 @@
 import os
 import click
 
-TEMPLATE_DIRS = ["datasource", "models", "repositories", "services", "tools", "urls"]
+TEMPLATE_DIRS = ["datasource", "models", "repositories", "services", "tools", "endpoints"]
 
 MAIN_PY = """\
-from restmcp import Server
-import urls  # auto-discovery
+import os
 
-server = Server.get_instance()
+import uvicorn
+
+import endpoints  # noqa: F401 — importing registers every Endpoint route
+from restmcp import Server
+
+# Serves REST at "/" and MCP at "/mcp-protocol/" from one app, with the
+# FastMCP lifespan wired in. Set AUTH_API_KEY to require a Bearer token.
+app = Server.get_instance().asgi_app()
 
 if __name__ == "__main__":
-    server.start()
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
 """
 
-URLS_INIT = """\
+ENDPOINTS_INIT = """\
 import importlib
 import pkgutil
 
+# Auto-discovery: importing this package imports every endpoint module, which
+# registers each Endpoint on the Server the moment its class body runs.
 for _info in pkgutil.iter_modules(__path__):
-    importlib.import_module(f"{__name__}.{_info.name}")
+    if not _info.name.startswith("_"):
+        importlib.import_module(f"{__name__}.{_info.name}")
 """
 
 PYPROJECT = """\
@@ -31,7 +40,8 @@ name = "{name}"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "pythia",
+    "restmcp",
+    "uvicorn",
 ]
 """
 
@@ -39,7 +49,7 @@ dependencies = [
 @click.command()
 @click.argument("name")
 def new_command(name: str):
-    """Create a new MCP server with the pythia structure."""
+    """Create a new MCP server with the restmcp structure."""
     base = os.path.join(os.getcwd(), name)
 
     if os.path.exists(base):
@@ -52,8 +62,8 @@ def new_command(name: str):
         os.makedirs(os.path.join(base, d))
         open(os.path.join(base, d, "__init__.py"), "w").close()
 
-    with open(os.path.join(base, "urls", "__init__.py"), "w") as f:
-        f.write(URLS_INIT)
+    with open(os.path.join(base, "endpoints", "__init__.py"), "w") as f:
+        f.write(ENDPOINTS_INIT)
 
     with open(os.path.join(base, "main.py"), "w") as f:
         f.write(MAIN_PY)

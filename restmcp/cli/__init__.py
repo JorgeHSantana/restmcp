@@ -4,7 +4,7 @@ from restmcp.cli.new import new_command
 
 @click.group()
 def app():
-    """pythia — framework for building MCP servers."""
+    """restmcp — framework for building MCP servers."""
     pass
 
 

@@ -13,10 +13,15 @@ _JSON_TO_PYTHON = {
 class McpApp:
     """Builds a FastMCP instance from registered url_handlers, mapping mcp_definition to typed pydantic tool wrappers."""
 
+    # TODO(decouple-mcp): this class and Server.asgi_app() are the only points
+    # touching fastmcp. To fully decouple, introduce a restmcp-owned protocol
+    # (e.g. McpBackend with build()/http_app()/lifespan) and make FastMCP one
+    # implementation, so a FastMCP major bump can't break callers. See the
+    # tracking issue for the full plan and trade-offs.
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
-        mcp = FastMCP("pythia")
+        mcp = FastMCP("restmcp")
         for handler in url_handlers:
             self._register_tool(mcp, handler)
         return mcp
@@ -53,8 +58,13 @@ class McpApp:
 
         ModelClass = create_model(f"{name}_args", **pydantic_fields)
 
-        def tool_wrapper(args: ModelClass) -> dict:
-            return handler.callback(**args.model_dump())
+        from restmcp.endpoint import run_callback
+
+        async def tool_wrapper(args: ModelClass) -> dict:
+            # Same sync/async contract as the REST path: async callbacks are
+            # awaited, sync callbacks run in a threadpool. (A plain sync wrapper
+            # would return an un-awaited coroutine for async callbacks.)
+            return await run_callback(handler.callback, **args.model_dump())
 
         tool_wrapper.__name__ = name
         tool_wrapper.__doc__ = description

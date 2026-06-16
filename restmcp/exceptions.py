@@ -1,5 +1,5 @@
-class PythiaException(Exception):
-    """Base exception for pythia. Carries an HTTP status code alongside the message."""
+class RestMCPException(Exception):
+    """Base exception for restmcp. Carries an HTTP status code alongside the message."""
 
     def __init__(self, message: str, status_code: int = 500):
         self.message = message
@@ -7,11 +7,11 @@ class PythiaException(Exception):
         super().__init__(message)
 
 
-class ValidationError(PythiaException):
+class ValidationError(RestMCPException):
     def __init__(self, message: str):
         super().__init__(message, status_code=400)
 
 
-class NotFoundError(PythiaException):
+class NotFoundError(RestMCPException):
     def __init__(self, message: str):
         super().__init__(message, status_code=404)

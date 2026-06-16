@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
@@ -92,9 +93,29 @@ def test_tool_wrapper_calls_callback_with_args():
     _, mock_mcp = _build([handler])
     ModelClass, tool_wrapper = _get_model(mock_mcp)
 
-    result = tool_wrapper(ModelClass(x="hello", n=7))
+    # tool_wrapper is async (it honors the sync/async callback contract).
+    result = asyncio.run(tool_wrapper(ModelClass(x="hello", n=7)))
     assert result == {"ok": True}
     assert received == {"x": "hello", "n": 7}
+
+
+def test_tool_wrapper_awaits_async_callback():
+    received = {}
+
+    async def my_async_callback(x):
+        received["x"] = x
+        return {"async": True}
+
+    handler = _make_handler(
+        properties={"x": {"type": "string"}},
+        callback=my_async_callback,
+    )
+    _, mock_mcp = _build([handler])
+    ModelClass, tool_wrapper = _get_model(mock_mcp)
+
+    result = asyncio.run(tool_wrapper(ModelClass(x="hi")))
+    assert result == {"async": True}
+    assert received == {"x": "hi"}
 
 
 def test_tool_wrapper_name_and_doc():
