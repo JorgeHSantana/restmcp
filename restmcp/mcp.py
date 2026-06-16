@@ -58,8 +58,13 @@ class McpApp:
 
         ModelClass = create_model(f"{name}_args", **pydantic_fields)
 
-        def tool_wrapper(args: ModelClass) -> dict:
-            return handler.callback(**args.model_dump())
+        from restmcp.endpoint import run_callback
+
+        async def tool_wrapper(args: ModelClass) -> dict:
+            # Same sync/async contract as the REST path: async callbacks are
+            # awaited, sync callbacks run in a threadpool. (A plain sync wrapper
+            # would return an un-awaited coroutine for async callbacks.)
+            return await run_callback(handler.callback, **args.model_dump())
 
         tool_wrapper.__name__ = name
         tool_wrapper.__doc__ = description

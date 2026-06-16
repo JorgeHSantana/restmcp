@@ -11,7 +11,7 @@ class SampleEntity(Entity):
 def test_serialize_json_safe():
     s = SampleEntity(id=1, when=dt.datetime(2026, 6, 14, 10, 0)).serialize()
     assert s == {"id": 1, "when": "2026-06-14T10:00:00"}
-    json.dumps(s)  # não levanta
+    json.dumps(s)  # does not raise
 
 
 def test_deserialize():

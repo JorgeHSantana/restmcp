@@ -9,6 +9,22 @@ from fastapi.responses import JSONResponse
 from restmcp.exceptions import PythiaException, ValidationError
 
 
+async def run_callback(callback: object, /, **kwargs):
+    """Invoke an Endpoint callback under restmcp's sync/async contract.
+
+    The contract (identical for REST and MCP):
+    - **async callback** -> awaited directly. Keep its I/O async; do not call
+      blocking code inside it, or you will stall the event loop.
+    - **sync callback** -> run in the default threadpool, so a blocking
+      Repository/DataSource call (e.g. a synchronous DB driver) never blocks the
+      loop. A plain `def callback` doing blocking I/O is therefore correct.
+    """
+    if inspect.iscoroutinefunction(callback):
+        return await callback(**kwargs)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: callback(**kwargs))
+
+
 def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
     if not isinstance(mcp_def, dict):
         raise TypeError(
@@ -77,13 +93,7 @@ class Endpoint(ABC):
                     raise ValidationError(f"Invalid parameter: {key}")
                 parameters[key] = value
 
-            if inspect.iscoroutinefunction(self.callback):
-                result = await self.callback(**parameters)
-            else:
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    None, lambda: self.callback(**parameters)
-                )
+            result = await run_callback(self.callback, **parameters)
 
             return JSONResponse(jsonable_encoder({
                 "tool": self.mcp_definition["name"],

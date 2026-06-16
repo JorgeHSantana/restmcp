@@ -7,7 +7,7 @@ def _client():
     server = Server.get_instance()
 
     class DateTimeResponseEndpoint(Endpoint):
-        mcp_definition = {"name": "datetime_tool", "description": "retorna data",
+        mcp_definition = {"name": "datetime_tool", "description": "returns a date",
                           "parameters": {"properties": {}}}
         url = "/mcp/tools/datetime_tool"
         method = "POST"
@@ -18,7 +18,7 @@ def _client():
     return TestClient(server.app)
 
 
-def test_datetime_no_result_serializa_iso():
+def test_datetime_in_result_serialized_as_iso():
     resp = _client().post("/mcp/tools/datetime_tool", json={})
     assert resp.status_code == 200
     assert resp.json()["result"]["when"] == "2026-06-14T10:00:00"

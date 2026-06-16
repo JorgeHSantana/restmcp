@@ -244,6 +244,18 @@ async def callback(self, product_id: str) -> dict:
         return r.json()
 ```
 
+**The contract (identical for REST and MCP):**
+
+- A **sync** callback runs in a threadpool, so blocking work — a synchronous DB
+  driver, `requests`, file I/O — never stalls the event loop. Writing your
+  `Repository`/`DataSource` synchronously is the simple, correct default.
+- An **async** callback is awaited directly. Inside it, **keep the I/O async**
+  (`httpx`, an async DB driver): calling blocking code from an async callback
+  *does* stall the loop, because it is not moved to a thread.
+
+Rule of thumb: sync all the way down, or async all the way down — don't put
+blocking calls inside an `async def` callback.
+
 **Response format:**
 
 ```json
@@ -291,7 +303,7 @@ mcp = server.get_mcp()
 - **Auth:** set `AUTH_API_KEY` (Bearer). `asgi_app()` protects REST **and** the mounted MCP; `/health` and `/mcp/tools` remain public. Multiple keys: comma-separated.
 - **Serialization:** callback return values are serialized with `jsonable_encoder` — `datetime` → ISO 8601, `Decimal` → string, Pydantic models → dict, automatically. Override per-entity via `serialize()`.
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
-- **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds)` — the cache key is built from the arguments, so it works even with `list`/`dict` args.
+- **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
 - **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
 - **Dependencies:** `fastmcp` 3.x is recommended (this package requires `fastmcp>=2.0`; upgrade to 3.x for full Streamable HTTP support). Installing fastmcp also pulls in `starlette`.
 
