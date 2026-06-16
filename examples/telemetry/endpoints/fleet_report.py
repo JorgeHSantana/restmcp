@@ -1,4 +1,6 @@
-"""Fleet rollup — shows the cached_method memoization in action."""
+"""Fleet rollup — shows inference alongside cached_method memoization."""
+
+from typing import Annotated, Optional
 
 from restmcp import Endpoint
 
@@ -10,23 +12,13 @@ _service = BatteryHealthService()
 
 
 class FleetReportEndpoint(Endpoint):
-    mcp_definition = {
-        "name": "fleet_report",
-        "description": "Fleet-wide battery rollup (cached for 30s).",
-        "parameters": {
-            "properties": {
-                "device_id_list": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "Subset of devices; omit for the whole fleet",
-                    "default": None,
-                },
-            },
-        },
-    }
     url = "/api/fleet-report"
     method = "POST"
 
-    def callback(self, device_id_list=None) -> dict:
+    def callback(
+        self,
+        device_id_list: Annotated[Optional[list[int]], "Subset of devices; omit for the whole fleet"] = None,
+    ) -> dict:
+        """Fleet-wide battery rollup (cached for 30s)."""
         # Call this twice within 30s: the server logs "computing" only once.
         return _service.fleet_report(device_id_list=device_id_list)
