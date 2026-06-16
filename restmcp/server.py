@@ -40,6 +40,30 @@ class Server:
     def get_mcp(self):
         return self._mcp.build(self.url_handlers)
 
+    def asgi_app(self, mcp_path: str = "/mcp-protocol", transport: str = "http",
+                 public_paths: tuple = ("/health",)):
+        """App ASGI único servindo REST (em `/`) + MCP (em `mcp_path`).
+
+        Detém o lifespan do FastMCP no app pai (evita 'Task group is not
+        initialized'). `transport`: 'http' (Streamable, fastmcp 3.x default),
+        'streamable-http' (fastmcp 2.x alias) ou 'sse'.
+        Se AUTH_API_KEY estiver setada, AuthMiddleware é aplicado cobrindo REST
+        e MCP; `public_paths` lista prefixos isentos de auth.
+        """
+        import os
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
+        mcp_http = self.get_mcp().http_app(transport=transport)
+        app = Starlette(
+            routes=[Mount(mcp_path, app=mcp_http), Mount("/", app=self.app)],
+            lifespan=mcp_http.lifespan,
+        )
+        if os.getenv("AUTH_API_KEY"):
+            from restmcp.auth import AuthMiddleware
+            app = AuthMiddleware(app, public_paths=public_paths)
+        return app
+
     @classmethod
     def get_instance(cls) -> "Server":
         if cls._instance is None:
