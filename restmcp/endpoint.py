@@ -3,6 +3,7 @@ import inspect
 from abc import ABC
 
 from fastapi import Depends, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from restmcp.exceptions import PythiaException, ValidationError
@@ -84,27 +85,27 @@ class Endpoint(ABC):
                     None, lambda: self.callback(**parameters)
                 )
 
-            return JSONResponse({
+            return JSONResponse(jsonable_encoder({
                 "tool": self.mcp_definition["name"],
                 "result": result,
                 "success": True,
-            })
+            }))
 
         except PythiaException as e:
-            return JSONResponse({
+            return JSONResponse(jsonable_encoder({
                 "error": e.message,
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": e.__class__.__name__,
-            }, status_code=e.status_code)
+            }), status_code=e.status_code)
 
         except Exception as e:
-            return JSONResponse({
+            return JSONResponse(jsonable_encoder({
                 "error": str(e),
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": "InternalServerError",
-            }, status_code=500)
+            }), status_code=500)
 
     def __init__(self):
         from restmcp.server import Server
