@@ -43,6 +43,7 @@ class McpApp:
         properties = def_dict.get("parameters", {}).get("properties", {})
 
         parameters = []
+        annotations = {}
         for prop_name, prop_data in properties.items():
             ptype = prop_data.get("type")
             if ptype == "array":
@@ -62,6 +63,7 @@ class McpApp:
             annotation = (
                 Annotated[py_type, Field(description=prop_desc)] if prop_desc else py_type
             )
+            annotations[prop_name] = annotation
 
             if has_default:
                 parameters.append(
@@ -89,4 +91,5 @@ class McpApp:
         tool_wrapper.__name__ = name
         tool_wrapper.__doc__ = description
         tool_wrapper.__signature__ = inspect.Signature(parameters)
+        tool_wrapper.__annotations__ = {**annotations, "return": dict}
         return tool_wrapper
