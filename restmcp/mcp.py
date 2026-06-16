@@ -27,50 +27,66 @@ class McpApp:
         return mcp
 
     def _register_tool(self, mcp: Any, handler: Any):
-        from pydantic import Field, create_model
+        mcp.add_tool(self._build_tool_function(handler))
+
+    def _build_tool_function(self, handler: Any):
         import inspect
+        from typing import Annotated
+
+        from pydantic import Field
+
+        from restmcp.endpoint import run_callback
 
         def_dict = handler.mcp_definition
         name = def_dict["name"]
         description = def_dict["description"]
         properties = def_dict.get("parameters", {}).get("properties", {})
 
-        pydantic_fields = {}
+        parameters = []
         for prop_name, prop_data in properties.items():
             ptype = prop_data.get("type")
             if ptype == "array":
                 item_ptype = prop_data.get("items", {}).get("type", "string")
-                item_type = _JSON_TO_PYTHON.get(item_ptype, str)
-                py_type = List[item_type]
+                py_type = List[_JSON_TO_PYTHON.get(item_ptype, str)]
             elif ptype == "object":
                 py_type = Dict[str, Any]
             else:
                 py_type = _JSON_TO_PYTHON.get(ptype, str)
 
-            default_val = prop_data.get("default", ...)
-            if default_val is None:
+            has_default = "default" in prop_data
+            default_val = prop_data.get("default")
+            if has_default and default_val is None:
                 py_type = Optional[py_type]
 
-            pydantic_fields[prop_name] = (
-                py_type,
-                Field(default=default_val, description=prop_data.get("description", "")),
+            prop_desc = prop_data.get("description")
+            annotation = (
+                Annotated[py_type, Field(description=prop_desc)] if prop_desc else py_type
             )
 
-        ModelClass = create_model(f"{name}_args", **pydantic_fields)
+            if has_default:
+                parameters.append(
+                    inspect.Parameter(
+                        prop_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=annotation,
+                        default=default_val,
+                    )
+                )
+            else:
+                parameters.append(
+                    inspect.Parameter(
+                        prop_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=annotation,
+                    )
+                )
 
-        from restmcp.endpoint import run_callback
-
-        async def tool_wrapper(args: ModelClass) -> dict:
-            # Same sync/async contract as the REST path: async callbacks are
-            # awaited, sync callbacks run in a threadpool. (A plain sync wrapper
-            # would return an un-awaited coroutine for async callbacks.)
-            return await run_callback(handler.callback, **args.model_dump())
+        async def tool_wrapper(**kwargs) -> dict:
+            # Same sync/async contract as REST: async callbacks are awaited,
+            # sync callbacks run in a threadpool (see run_callback).
+            return await run_callback(handler.callback, **kwargs)
 
         tool_wrapper.__name__ = name
         tool_wrapper.__doc__ = description
-        sig = inspect.signature(tool_wrapper)
-        new_param = inspect.Parameter(
-            "args", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ModelClass
-        )
-        tool_wrapper.__signature__ = sig.replace(parameters=(new_param,))
-        mcp.add_tool(tool_wrapper)
+        tool_wrapper.__signature__ = inspect.Signature(parameters)
+        return tool_wrapper

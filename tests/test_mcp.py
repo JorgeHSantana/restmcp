@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import sys
-from typing import Dict, List
+import typing
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 from restmcp.mcp import McpApp, _JSON_TO_PYTHON
@@ -33,9 +35,20 @@ def _make_handler(properties=None, callback=None, name="tool", description="desc
     return handler
 
 
-def _get_model(mock_mcp):
-    tool_wrapper = mock_mcp.add_tool.call_args[0][0]
-    return tool_wrapper.__signature__.parameters["args"].annotation, tool_wrapper
+def _func(handler):
+    """The flat tool function McpApp builds for one handler."""
+    return McpApp()._build_tool_function(handler)
+
+
+def _params(fn):
+    return inspect.signature(fn).parameters
+
+
+def _base_type(annotation):
+    """Unwrap Annotated[T, Field(...)] -> T; otherwise return annotation."""
+    if hasattr(annotation, "__metadata__"):
+        return annotation.__origin__
+    return annotation
 
 
 # --- type mapping dict ---
@@ -56,7 +69,7 @@ def test_json_type_map_object():
     assert _JSON_TO_PYTHON["object"] is dict
 
 
-# --- build ---
+# --- build() ---
 
 def test_build_returns_fastmcp_instance():
     mock_module, mock_mcp = _mock_fastmcp()
@@ -76,114 +89,113 @@ def test_build_no_handlers_registers_nothing():
     mock_mcp.add_tool.assert_not_called()
 
 
-# --- tool wrapper ---
+# --- flat signature (the args-nesting fix) ---
 
-def test_tool_wrapper_calls_callback_with_args():
-    received = {}
+def test_tool_function_has_flat_signature():
+    handler = _make_handler(properties={
+        "device_id": {"type": "integer", "description": "Device id"},
+        "tags": {"type": "array", "items": {"type": "string"}, "default": None},
+    })
+    params = list(_params(_func(handler)))
+    assert params == ["device_id", "tags"]
+    assert "args" not in params
 
-    def my_callback(x, n):
-        received["x"] = x
-        received["n"] = n
-        return {"ok": True}
+
+def test_tool_function_routes_call_to_callback():
+    def cb(device_id, tags=None):
+        return {"device_id": device_id, "tags": tags}
 
     handler = _make_handler(
-        properties={"x": {"type": "string"}, "n": {"type": "integer"}},
-        callback=my_callback,
+        properties={
+            "device_id": {"type": "integer"},
+            "tags": {"type": "array", "items": {"type": "string"}, "default": None},
+        },
+        callback=cb,
     )
-    _, mock_mcp = _build([handler])
-    ModelClass, tool_wrapper = _get_model(mock_mcp)
-
-    # tool_wrapper is async (it honors the sync/async callback contract).
-    result = asyncio.run(tool_wrapper(ModelClass(x="hello", n=7)))
-    assert result == {"ok": True}
-    assert received == {"x": "hello", "n": 7}
+    fn = _func(handler)
+    result = asyncio.run(fn(device_id=7, tags=["a"]))
+    assert result == {"device_id": 7, "tags": ["a"]}
 
 
-def test_tool_wrapper_awaits_async_callback():
+def test_tool_function_awaits_async_callback():
     received = {}
 
-    async def my_async_callback(x):
+    async def cb(x):
         received["x"] = x
         return {"async": True}
 
-    handler = _make_handler(
-        properties={"x": {"type": "string"}},
-        callback=my_async_callback,
-    )
-    _, mock_mcp = _build([handler])
-    ModelClass, tool_wrapper = _get_model(mock_mcp)
-
-    result = asyncio.run(tool_wrapper(ModelClass(x="hi")))
+    handler = _make_handler(properties={"x": {"type": "string"}}, callback=cb)
+    fn = _func(handler)
+    result = asyncio.run(fn(x="hi"))
     assert result == {"async": True}
     assert received == {"x": "hi"}
 
 
-def test_tool_wrapper_name_and_doc():
-    handler = _make_handler(name="my_tool", description="does things")
-    _, mock_mcp = _build([handler])
-    _, tool_wrapper = _get_model(mock_mcp)
-    assert tool_wrapper.__name__ == "my_tool"
-    assert tool_wrapper.__doc__ == "does things"
+def test_tool_function_name_and_doc():
+    fn = _func(_make_handler(name="my_tool", description="does things"))
+    assert fn.__name__ == "my_tool"
+    assert fn.__doc__ == "does things"
 
 
-# --- field types ---
+# --- per-parameter type mapping (via the flat signature annotations) ---
 
 def test_string_field():
-    _, mock_mcp = _build([_make_handler(properties={"s": {"type": "string"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["s"].annotation is str
+    p = _params(_func(_make_handler(properties={"s": {"type": "string"}})))
+    assert _base_type(p["s"].annotation) is str
 
 
 def test_integer_field():
-    _, mock_mcp = _build([_make_handler(properties={"n": {"type": "integer"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["n"].annotation is int
+    p = _params(_func(_make_handler(properties={"n": {"type": "integer"}})))
+    assert _base_type(p["n"].annotation) is int
 
 
 def test_number_field():
-    _, mock_mcp = _build([_make_handler(properties={"f": {"type": "number"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["f"].annotation is float
+    p = _params(_func(_make_handler(properties={"f": {"type": "number"}})))
+    assert _base_type(p["f"].annotation) is float
 
 
 def test_boolean_field():
-    _, mock_mcp = _build([_make_handler(properties={"b": {"type": "boolean"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["b"].annotation is bool
+    p = _params(_func(_make_handler(properties={"b": {"type": "boolean"}})))
+    assert _base_type(p["b"].annotation) is bool
 
 
 def test_object_field():
-    from typing import Any
-    _, mock_mcp = _build([_make_handler(properties={"obj": {"type": "object"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["obj"].annotation == Dict[str, Any]
+    p = _params(_func(_make_handler(properties={"obj": {"type": "object"}})))
+    assert _base_type(p["obj"].annotation) == Dict[str, Any]
 
 
 def test_array_of_strings_field():
-    _, mock_mcp = _build([_make_handler(
+    p = _params(_func(_make_handler(
         properties={"tags": {"type": "array", "items": {"type": "string"}}}
-    )])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["tags"].annotation == List[str]
+    )))
+    assert _base_type(p["tags"].annotation) == List[str]
 
 
 def test_array_of_integers_field():
-    _, mock_mcp = _build([_make_handler(
+    p = _params(_func(_make_handler(
         properties={"ids": {"type": "array", "items": {"type": "integer"}}}
-    )])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["ids"].annotation == List[int]
+    )))
+    assert _base_type(p["ids"].annotation) == List[int]
 
 
 def test_unknown_type_falls_back_to_str():
-    _, mock_mcp = _build([_make_handler(properties={"x": {"type": "null"}})])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["x"].annotation is str
+    p = _params(_func(_make_handler(properties={"x": {"type": "null"}})))
+    assert _base_type(p["x"].annotation) is str
 
 
 def test_optional_field_when_default_is_none():
-    _, mock_mcp = _build([_make_handler(
+    p = _params(_func(_make_handler(
         properties={"x": {"type": "string", "default": None}}
-    )])
-    ModelClass, _ = _get_model(mock_mcp)
-    assert ModelClass.model_fields["x"].is_required() is False
+    )))
+    assert p["x"].default is None
+    assert _base_type(p["x"].annotation) == Optional[str]
+
+
+def test_description_carried_via_annotated():
+    p = _params(_func(_make_handler(
+        properties={"x": {"type": "string", "description": "the x value"}}
+    )))
+    annotation = p["x"].annotation
+    assert hasattr(annotation, "__metadata__")
+    field_info = annotation.__metadata__[0]
+    assert field_info.description == "the x value"
