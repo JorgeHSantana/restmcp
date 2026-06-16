@@ -28,11 +28,11 @@ def test_mcp_exige_token_quando_auth_ligada(monkeypatch):
     with TestClient(app) as c:
         assert c.get("/health").status_code == 200                           # público
 
-        r = c.post("/mcp-protocol/mcp", json=_MCP_INIT,
+        r = c.post("/mcp-protocol/", json=_MCP_INIT,
                    headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 401                                          # MCP sem token
 
-        r = c.post("/mcp-protocol/mcp", json=_MCP_INIT,
+        r = c.post("/mcp-protocol/", json=_MCP_INIT,
                    headers={"Accept": "application/json, text/event-stream",
                             "Authorization": "Bearer sk_test"})
         assert r.status_code == 200                                          # com token OK
@@ -45,7 +45,7 @@ def test_sem_auth_key_nao_exige_token(monkeypatch):
 
     app = server.asgi_app(mcp_path="/mcp-protocol")
     with TestClient(app) as c:
-        r = c.post("/mcp-protocol/mcp", json=_MCP_INIT,
+        r = c.post("/mcp-protocol/", json=_MCP_INIT,
                    headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 200                                          # sem key = livre
 

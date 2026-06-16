@@ -22,6 +22,6 @@ def test_asgi_app_serve_rest_e_mcp(monkeypatch):
     with TestClient(app) as c:
         assert c.get("/health").status_code == 200            # REST
         assert c.post("/mcp/tools/ping", json={}).json()["result"] == {"pong": True}
-        r = c.post("/mcp-protocol/mcp", json=init,
+        r = c.post("/mcp-protocol/", json=init,
                    headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 200                            # MCP handshake (lifespan OK)

@@ -15,10 +15,10 @@ class Entity(BaseModel):
             )
 
     def serialize(self) -> dict[str, Any]:
-        """Representação JSON-safe (datetime → ISO, Decimal → str, etc.)."""
+        """JSON-safe representation (datetime → ISO 8601, Decimal → str, etc.)."""
         return self.model_dump(mode="json")
 
     @classmethod
     def deserialize(cls, data: dict[str, Any]) -> Self:
-        """Constrói a entity a partir de um dict de dados crus."""
+        """Build the entity from a dict of raw data."""
         return cls(**data)

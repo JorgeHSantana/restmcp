@@ -1,4 +1,3 @@
-# restmcp/cache.py
 import time
 import threading
 import functools
