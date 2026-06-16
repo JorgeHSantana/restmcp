@@ -50,7 +50,9 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
 
 
 class Endpoint(ABC):
-    """HTTP + MCP endpoint. Subclasses auto-register on class definition when url, method, mcp_definition, and callback are all set."""
+    """HTTP + MCP endpoint. Subclasses auto-register on class definition when url,
+    method, and callback are set; mcp_definition is inferred from the callback
+    signature when not provided explicitly."""
 
     disabled: bool = False
 
@@ -65,8 +67,12 @@ class Endpoint(ABC):
         if getattr(cls, "disabled", False):
             return
 
-        _required = ("url", "method", "mcp_definition", "callback")
+        _required = ("url", "method", "callback")
         if all(vars(cls).get(attr) for attr in _required):
+            if "mcp_definition" not in vars(cls):
+                from restmcp.schema import build_mcp_definition
+
+                cls.mcp_definition = build_mcp_definition(cls)
             _validate_mcp_definition(cls.__name__, vars(cls)["mcp_definition"])
             try:
                 cls()
