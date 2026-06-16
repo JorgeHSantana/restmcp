@@ -1,5 +1,6 @@
 import inspect
 import re
+import types
 import typing
 from typing import Any
 
@@ -63,7 +64,8 @@ def _unwrap_annotated(annotation):
 
 def _unwrap_optional(annotation):
     """Reduce ``Optional[X]`` / ``X | None`` to ``X``; otherwise return as-is."""
-    if typing.get_origin(annotation) is typing.Union:
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union or origin is getattr(types, "UnionType", ()):
         non_none = [a for a in typing.get_args(annotation) if a is not type(None)]
         if len(non_none) == 1:
             return non_none[0]
@@ -121,7 +123,7 @@ def build_mcp_definition(cls) -> dict:
                    docstring, then the tool name
     parameters  -> build_parameters(callback)
     """
-    callback = vars(cls).get("callback") or getattr(cls, "callback", None)
+    callback = getattr(cls, "callback", None)
     name = tool_name_from_class(cls)
     description = _first_doc_line(callback) or _first_doc_line(cls) or name
     return {

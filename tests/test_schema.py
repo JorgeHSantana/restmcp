@@ -90,6 +90,14 @@ def test_build_parameters_unwraps_optional():
     assert props["when"] == {"type": "string", "default": None}
 
 
+def test_build_parameters_unwraps_pep604_union():
+    def callback(self, count: int | None = None) -> dict:
+        ...
+
+    props = build_parameters(callback)["properties"]
+    assert props["count"] == {"type": "integer", "default": None}
+
+
 from restmcp.schema import build_mcp_definition
 
 
