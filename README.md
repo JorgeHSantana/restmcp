@@ -330,8 +330,8 @@ raise NotFoundError("Product not found")          # → HTTP 404
 
 ```mermaid
 graph TD
-    PythiaException --> ValidationError["ValidationError (400)"]
-    PythiaException --> NotFoundError["NotFoundError (404)"]
+    RestMCPException --> ValidationError["ValidationError (400)"]
+    RestMCPException --> NotFoundError["NotFoundError (404)"]
 ```
 
 ---

@@ -1,5 +1,5 @@
 """
-pythia usage example — sync vs async
+restmcp usage example — sync vs async
 
 Patterns demonstrated:
   1. Sync callback    → runs in thread pool (via run_in_executor), does not block the event loop
@@ -45,7 +45,7 @@ def client():
 class TestSyncEndpoint:
     """
     GetPostEndpoint uses `def callback` (sync).
-    pythia detects it via inspect.iscoroutinefunction() and calls:
+    restmcp detects it via inspect.iscoroutinefunction() and calls:
         loop.run_in_executor(None, lambda: self.callback(**params))
 
     The event loop is not blocked. Python's thread pool handles the
@@ -97,7 +97,7 @@ class TestSyncEndpoint:
 class TestAsyncEndpoint:
     """
     GetPostAsyncEndpoint uses `async def callback`.
-    pythia detects it and calls:
+    restmcp detects it and calls:
         result = await self.callback(**params)
 
     httpx.AsyncClient makes the request without blocking the event loop.
@@ -160,7 +160,7 @@ class TestAsyncParallel:
 
 class TestDependencyInjection:
     """
-    pythia's injection pattern: Service(repo=MockRepository())
+    restmcp's injection pattern: Service(repo=MockRepository())
     Isolates the test from the network — zero HTTP calls.
     """
 

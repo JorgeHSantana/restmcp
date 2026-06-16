@@ -1,5 +1,5 @@
 import pytest
-from restmcp.exceptions import ValidationError, NotFoundError, PythiaException
+from restmcp.exceptions import ValidationError, NotFoundError, RestMCPException
 
 
 def test_validation_error_status_code():
@@ -22,12 +22,12 @@ def test_not_found_error_message():
     assert err.message == "resource not found"
 
 
-def test_validation_error_is_pythia_exception():
-    assert issubclass(ValidationError, PythiaException)
+def test_validation_error_is_restmcp_exception():
+    assert issubclass(ValidationError, RestMCPException)
 
 
-def test_not_found_error_is_pythia_exception():
-    assert issubclass(NotFoundError, PythiaException)
+def test_not_found_error_is_restmcp_exception():
+    assert issubclass(NotFoundError, RestMCPException)
 
 
 def test_exceptions_are_raiseable():

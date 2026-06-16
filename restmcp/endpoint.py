@@ -6,7 +6,7 @@ from fastapi import Depends, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from restmcp.exceptions import PythiaException, ValidationError
+from restmcp.exceptions import RestMCPException, ValidationError
 
 
 async def run_callback(callback: object, /, **kwargs):
@@ -101,7 +101,7 @@ class Endpoint(ABC):
                 "success": True,
             }))
 
-        except PythiaException as e:
+        except RestMCPException as e:
             return JSONResponse(jsonable_encoder({
                 "error": e.message,
                 "tool": self.mcp_definition["name"],
