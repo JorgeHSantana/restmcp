@@ -44,3 +44,63 @@ def schema_for_annotation(annotation) -> dict:
     if annotation in _PRIMITIVES:
         return {"type": _PRIMITIVES[annotation]}
     return {"type": "string"}
+
+
+def _unwrap_annotated(annotation):
+    """Return (base_type, description_or_None) for an annotation.
+
+    ``Annotated[int, "Device id"]`` -> ``(int, "Device id")``. The first string
+    metadata entry is used as the parameter description.
+    """
+    if hasattr(annotation, "__metadata__"):
+        base = annotation.__origin__
+        description = next(
+            (m for m in annotation.__metadata__ if isinstance(m, str)), None
+        )
+        return base, description
+    return annotation, None
+
+
+def _unwrap_optional(annotation):
+    """Reduce ``Optional[X]`` / ``X | None`` to ``X``; otherwise return as-is."""
+    if typing.get_origin(annotation) is typing.Union:
+        non_none = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
+
+
+def build_parameters(callback) -> dict:
+    """Build the MCP ``parameters`` dict from a callback's signature.
+
+    Each parameter (excluding ``self`` and ``*args``/``**kwargs``) becomes one
+    property. A parameter with no default is required (no ``"default"`` key);
+    one with a default carries it under ``"default"``. ``Annotated`` string
+    metadata becomes the property ``"description"``.
+    """
+    sig = inspect.signature(callback)
+    try:
+        hints = typing.get_type_hints(callback, include_extras=True)
+    except Exception:
+        hints = {}
+
+    properties: dict[str, Any] = {}
+    for pname, param in sig.parameters.items():
+        if pname == "self":
+            continue
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+
+        annotation = hints.get(pname, param.annotation)
+        base, description = _unwrap_annotated(annotation)
+        base = _unwrap_optional(base)
+
+        schema = schema_for_annotation(base)
+        if description:
+            schema["description"] = description
+        if param.default is not inspect.Parameter.empty:
+            schema["default"] = param.default
+
+        properties[pname] = schema
+
+    return {"properties": properties}
