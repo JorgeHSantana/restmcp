@@ -1,6 +1,10 @@
 # restmcp
 
+[![Test & Publish](https://github.com/JorgeHSantana/restmcp/actions/workflows/publish.yml/badge.svg)](https://github.com/JorgeHSantana/restmcp/actions/workflows/publish.yml)
 [![codecov](https://codecov.io/gh/JorgeHSantana/restmcp/branch/main/graph/badge.svg)](https://codecov.io/gh/JorgeHSantana/restmcp)
+[![PyPI](https://img.shields.io/pypi/v/restmcp.svg)](https://pypi.org/project/restmcp/)
+[![Python](https://img.shields.io/pypi/pyversions/restmcp.svg)](https://pypi.org/project/restmcp/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > One framework. MCP tools and REST endpoints, auto-registered.
 
