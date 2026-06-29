@@ -108,24 +108,42 @@ def build_parameters(callback) -> dict:
     return {"properties": properties}
 
 
-def _first_doc_line(obj) -> str | None:
+_RETURNS_RE = re.compile(r"^(returns?|retorn[oa])\s*:", re.IGNORECASE)
+
+
+def _docstring(obj) -> str | None:
+    """Full, dedented docstring of *obj* (or None if it has none)."""
     doc = inspect.getdoc(obj)
     if doc and doc.strip():
-        return doc.strip().splitlines()[0].strip()
+        return doc.strip()
     return None
+
+
+def has_returns_doc(callback) -> bool:
+    """True if *callback*'s docstring documents its return value.
+
+    Looks for a ``Returns:`` section header (also accepts the Portuguese
+    ``Retorna:``/``Retorno:``) on any line of the docstring. The MCP client only
+    ever sees the tool description, so an inferred tool must spell out what it
+    returns there — this is what enforces that.
+    """
+    doc = inspect.getdoc(callback)
+    if not doc:
+        return False
+    return any(_RETURNS_RE.match(line.strip()) for line in doc.splitlines())
 
 
 def build_mcp_definition(cls) -> dict:
     """Infer the full ``mcp_definition`` dict for an Endpoint subclass.
 
     name        -> tool_name_from_class(cls)
-    description -> first line of the callback docstring, then the class
-                   docstring, then the tool name
+    description -> the full callback docstring (which must include a ``Returns:``
+                   section), then the class docstring, then the tool name
     parameters  -> build_parameters(callback)
     """
     callback = getattr(cls, "callback", None)
     name = tool_name_from_class(cls)
-    description = _first_doc_line(callback) or _first_doc_line(cls) or name
+    description = _docstring(callback) or _docstring(cls) or name
     return {
         "name": name,
         "description": description,

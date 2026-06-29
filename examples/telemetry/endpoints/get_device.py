@@ -12,7 +12,11 @@ class GetDeviceEndpoint(Endpoint):
     method = "POST"
 
     def callback(self, device_id: Annotated[int, "Device id (1-5)"]) -> dict:
-        """Latest telemetry reading for one device."""
+        """Latest telemetry reading for one device.
+
+        Returns: the device's most recent reading (battery %, voltage,
+        recorded_at as ISO 8601) plus a derived `status` field.
+        """
         # Returning the Entity directly: `recorded_at` (a datetime) is serialized
         # to ISO 8601 by the framework, and `serialize()` adds the `status` field.
         reading = BatteryHealthService().latest_reading(device_id)

@@ -200,13 +200,23 @@ class GetProductEndpoint(Endpoint):
     method = "POST"
 
     async def callback(self, product_id: Annotated[str, "Product ID"]) -> dict:
-        """Returns a product by ID."""
+        """Get a product by ID.
+
+        Returns: the product object (id, name, price, currency).
+        """
         return await GetProductService().execute(product_id)
 ```
 
-The MCP tool name (`get_product`), description (the docstring's first line), and
-parameter schema (types + `Annotated` text) are inferred from the `callback`. Set
-`mcp_definition` explicitly only when you need to override the inferred schema.
+The MCP tool name (`get_product`), description (the **full** callback docstring),
+and parameter schema (types + `Annotated` text) are inferred from the `callback`.
+
+**The callback docstring must include a `Returns:` section** — the MCP client only
+ever sees the tool description, so an inferred tool is required to spell out what it
+returns there (the Portuguese `Retorna:`/`Retorno:` are also accepted). Defining an
+inferred endpoint without one raises a `TypeError` at class-definition time.
+
+Set `mcp_definition` explicitly only when you need to override the inferred schema;
+the `Returns:` requirement does not apply to hand-written definitions.
 
 Defining the class is enough. The route is registered on the `Server` singleton the moment Python processes the class body.
 

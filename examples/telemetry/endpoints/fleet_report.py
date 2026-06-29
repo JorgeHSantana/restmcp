@@ -19,6 +19,10 @@ class FleetReportEndpoint(Endpoint):
         self,
         device_id_list: Annotated[Optional[list[int]], "Subset of devices; omit for the whole fleet"] = None,
     ) -> dict:
-        """Fleet-wide battery rollup (cached for 30s)."""
+        """Fleet-wide battery rollup (cached for 30s).
+
+        Returns: aggregate battery stats for the selected devices —
+        device_count, avg_battery_pct, and a min/max range.
+        """
         # Call this twice within 30s: the server logs "computing" only once.
         return _service.fleet_report(device_id_list=device_id_list)

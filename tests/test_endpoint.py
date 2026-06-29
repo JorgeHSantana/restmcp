@@ -84,7 +84,11 @@ def test_endpoint_infers_mcp_definition_when_absent():
     class InferDefEndpoint(Endpoint):
         url = "/x"
         method = "POST"
-        def callback(self): pass
+        def callback(self):
+            """Infer the definition.
+
+            Returns: nothing meaningful.
+            """
 
     handler = Server.get_instance().url_handlers[-1]
     assert handler.mcp_definition["name"] == "infer_def"

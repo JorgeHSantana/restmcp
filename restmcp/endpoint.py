@@ -70,8 +70,19 @@ class Endpoint(ABC):
         _required = ("url", "method", "callback")
         if all(vars(cls).get(attr) for attr in _required):
             if "mcp_definition" not in vars(cls):
-                from restmcp.schema import build_mcp_definition
+                from restmcp.schema import build_mcp_definition, has_returns_doc
 
+                if not has_returns_doc(cls.callback):
+                    raise TypeError(
+                        f"{cls.__name__}: the callback docstring must document its "
+                        f"return value in a 'Returns:' section when mcp_definition "
+                        f"is inferred — that text is the only thing the MCP client "
+                        f"sees about the output. Example:\n"
+                        f'    """One-line summary.\n\n'
+                        f"    Returns: what the tool returns.\n"
+                        f'    """\n'
+                        f"(or set mcp_definition explicitly to override inference)."
+                    )
                 cls.mcp_definition = build_mcp_definition(cls)
             _validate_mcp_definition(cls.__name__, vars(cls)["mcp_definition"])
             try:

@@ -18,7 +18,11 @@ class CheckBatteryEndpoint(Endpoint):
         reference_date: Annotated[Optional[str], "Window end (ISO 8601); defaults to now"] = None,
         days_window: Annotated[int, "How many days back to look"] = 7,
     ) -> dict:
-        """Group devices by battery status within a time window."""
+        """Group devices by battery status within a time window.
+
+        Returns: a map of battery status -> list of device ids
+        (e.g. {"healthy": [...], "degraded": [...], "critical": [...]}).
+        """
         if days_window <= 0:
             raise ValidationError("days_window must be positive")
         # reference_date arrives as a string — coerce it before use.
