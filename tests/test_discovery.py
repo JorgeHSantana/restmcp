@@ -74,3 +74,24 @@ def test_autodiscover_recurses_into_subpackages(tmp_path, monkeypatch):
 
     assert "eps_recursion_pkg.admin.nested_mod" in sys.modules
     assert "eps_recursion_pkg.admin._private_mod" not in sys.modules
+
+
+def test_autodiscover_skips_private_subpackages(tmp_path, monkeypatch):
+    import sys
+
+    from restmcp.discovery import autodiscover
+
+    pkg = tmp_path / "eps_priv_sub_pkg"
+    priv = pkg / "_hidden"
+    priv.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    # A private subpackage must be pruned before it is even imported: both its
+    # __init__ and any module inside it must never run.
+    (priv / "__init__.py").write_text("raise AssertionError('private subpackage imported')\n")
+    (priv / "mod.py").write_text("raise AssertionError('module in private subpackage imported')\n")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    autodiscover("eps_priv_sub_pkg")  # must not raise
+
+    assert "eps_priv_sub_pkg._hidden" not in sys.modules
+    assert "eps_priv_sub_pkg._hidden.mod" not in sys.modules

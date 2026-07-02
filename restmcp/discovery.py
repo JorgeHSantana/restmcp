@@ -19,9 +19,18 @@ def autodiscover(package: str) -> None:
     pkg = importlib.import_module(package)
     if not hasattr(pkg, "__path__"):
         raise ValueError(f"{package!r} is not a package (has no __path__)")
-    prefix = pkg.__name__ + "."
-    for module in pkgutil.walk_packages(pkg.__path__, prefix=prefix):
-        relative = module.name[len(prefix):]
-        if any(part.startswith("_") for part in relative.split(".")):
-            continue
-        importlib.import_module(module.name)
+
+    # Walk manually rather than with pkgutil.walk_packages: walk_packages
+    # imports every subpackage (running its __init__) to descend into it,
+    # which would execute _private subpackages before we could skip them.
+    # Pruning `_`-prefixed names here keeps them from ever being imported.
+    def _walk(search_paths, prefix: str) -> None:
+        for module in pkgutil.iter_modules(search_paths):
+            if module.name.startswith("_"):
+                continue
+            full_name = f"{prefix}{module.name}"
+            mod = importlib.import_module(full_name)
+            if module.ispkg:
+                _walk(mod.__path__, f"{full_name}.")
+
+    _walk(pkg.__path__, pkg.__name__ + ".")
