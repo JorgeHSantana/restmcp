@@ -123,7 +123,10 @@ def build_arg_model(mcp_definition: dict) -> type[BaseModel]:
     fields = {}
     for name, prop in props.items():
         check_property_name(tool, name)
-        fields[name] = field_spec_for(name, prop)
+        try:
+            fields[name] = field_spec_for(name, prop)
+        except TypeError as e:
+            raise TypeError(f"{tool}: {e}") from e
     model = create_model(
         f"{tool}_Args",
         __config__=ConfigDict(extra="forbid"),

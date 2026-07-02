@@ -255,7 +255,7 @@ def test_build_arg_model_array_item_coercion_and_guard():
 # --- field_spec_for / registration-time hardening ---
 
 def test_field_spec_for_required_and_optional():
-    from restmcp.schema import field_spec_for, python_type_for
+    from restmcp.schema import field_spec_for
     ann, default = field_spec_for("n", {"type": "integer"})
     assert default is ...
     ann_opt, default_opt = field_spec_for("ids", {"type": "array", "default": None})
@@ -276,6 +276,15 @@ def test_field_spec_for_rejects_bad_default():
         field_spec_for("n", {"type": "integer", "default": "abc"})
     with pytest.raises(TypeError, match="default"):
         field_spec_for("n", {"type": "integer", "default": True})   # anti-bool
+
+
+def test_build_arg_model_bad_default_error_names_the_tool():
+    import pytest
+    from restmcp.schema import build_arg_model
+    with pytest.raises(TypeError, match="mytool"):
+        build_arg_model({"name": "mytool", "description": "x",
+                         "parameters": {"properties":
+                             {"n": {"type": "integer", "default": "abc"}}}})
 
 
 def test_check_property_name():
