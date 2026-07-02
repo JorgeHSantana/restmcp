@@ -510,7 +510,7 @@ def test_get_endpoint_reads_query_params():
     assert response.json()["result"] == {"q": "hello", "n": 7}
 
 
-def test_unknown_query_param_returns_400():
+def test_unknown_query_param_is_ignored():
     class Query2Endpoint(Endpoint):
         mcp_definition = {
             "name": "query2_tool",
@@ -524,9 +524,9 @@ def test_unknown_query_param_returns_400():
             return {"q": q}
 
     client = TestClient(Server.get_instance().app)
-    response = client.get("/api/query2?nope=1")
-    assert response.status_code == 400
-    assert response.json()["error_type"] == "ValidationError"
+    response = client.get("/api/query2?nope=1")          # unknown query key ignored
+    assert response.status_code == 200
+    assert response.json()["result"] == {"q": "none"}
 
 
 def test_internal_error_does_not_leak_details():
@@ -606,3 +606,36 @@ def test_route_registration_failure_rolls_back_handler(monkeypatch):
 
     # rollback: the handler appended before the route failure must be removed
     assert server.url_handlers == []
+
+
+# --- unified validation via the shared pydantic model ---
+
+def test_integral_float_and_numeric_string_accepted():
+    _make_typed_endpoint()  # n: integer (required), flag: boolean default False
+    client = TestClient(Server.get_instance().app)
+    assert client.post("/api/typed", json={"n": 5.0}).json()["result"]["n"] == 5
+    assert client.post("/api/typed", json={"n": "5"}).json()["result"]["n"] == 5
+
+
+def test_bool_rejected_for_integer():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/typed", json={"n": True})
+    assert r.status_code == 400
+    assert r.json()["error_type"] == "ValidationError"
+
+
+def test_unknown_body_param_returns_400():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/typed", json={"n": 1, "bogus": 2})
+    assert r.status_code == 400
+    assert r.json()["error_type"] == "ValidationError"
+
+
+def test_missing_required_reports_field_name():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/typed", json={})
+    assert r.status_code == 400
+    assert "n" in r.json()["error"]
