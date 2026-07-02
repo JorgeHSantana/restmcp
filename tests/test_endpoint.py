@@ -644,7 +644,7 @@ def test_missing_required_reports_field_name():
 # --- registration-time definition errors (review findings 1, 3, 4) ---
 
 def test_underscore_property_name_fails_at_class_definition():
-    with pytest.raises(TypeError, match="_secret"):
+    with pytest.raises(TypeError) as excinfo:
         class Under1Endpoint(Endpoint):
             mcp_definition = {
                 "name": "under1_tool",
@@ -654,10 +654,15 @@ def test_underscore_property_name_fails_at_class_definition():
             url = "/api/under1"
             method = "POST"
             def callback(self, _secret): return {}
+    msg = str(excinfo.value)
+    assert "Under1Endpoint" in msg and "_secret" in msg
+    # Clean early error from _validate_mcp_definition — not the old misleading
+    # __init_subclass__ wrapper that blames __init__ parameters.
+    assert "__init__ with parameters" not in msg
 
 
 def test_pydantic_reserved_property_name_fails_with_context():
-    with pytest.raises(TypeError, match="Reserved1Endpoint"):
+    with pytest.raises(TypeError) as excinfo:
         class Reserved1Endpoint(Endpoint):
             mcp_definition = {
                 "name": "reserved1_tool",
@@ -667,6 +672,9 @@ def test_pydantic_reserved_property_name_fails_with_context():
             url = "/api/reserved1"
             method = "POST"
             def callback(self, **kwargs): return {}
+    msg = str(excinfo.value)
+    assert "Reserved1Endpoint" in msg and "model_dump" in msg
+    assert "__init__ with parameters" not in msg
 
 
 def test_none_parameters_registers_and_serves():
@@ -689,7 +697,9 @@ def test_none_parameters_registers_and_serves():
 
 
 def test_bad_default_fails_at_class_definition_with_context():
-    with pytest.raises((TypeError, ValueError), match="BadDefault1Endpoint|default"):
+    # ValueError (not TypeError): the __init__ wrapper converts definition
+    # errors so the __init_subclass__ TypeError handler can't relabel them.
+    with pytest.raises(ValueError, match="BadDefault1Endpoint.*invalid mcp_definition"):
         class BadDefault1Endpoint(Endpoint):
             mcp_definition = {
                 "name": "bad_default1_tool",
