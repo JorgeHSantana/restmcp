@@ -2,9 +2,9 @@ import inspect
 import re
 import types
 import typing
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, ConfigDict, create_model
 
 _PRIMITIVES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -50,6 +50,34 @@ def python_type_for(prop: dict):
     if t == "object":
         return Dict[str, Any]
     return str
+
+
+def build_arg_model(mcp_definition: dict):
+    """Build a pydantic model for an endpoint's parameters from its mcp_definition.
+
+    One field per property. A property without a "default" is required; one with
+    a default uses it (wrapped Optional[...] when the default is None, so an
+    explicit null is accepted). extra='forbid' makes an unknown key raise — the
+    caller pre-filters the query string to known keys, so this enforces
+    body-strict validation. This is the REST counterpart to the pydantic model
+    fastmcp builds from the signature; both derive from python_type_for.
+    """
+    props = mcp_definition.get("parameters", {}).get("properties", {})
+    fields = {}
+    for name, prop in props.items():
+        annotation = python_type_for(prop)
+        if "default" in prop:
+            default = prop["default"]
+            if default is None:
+                annotation = Optional[annotation]
+            fields[name] = (annotation, default)
+        else:
+            fields[name] = (annotation, ...)
+    return create_model(
+        f"{mcp_definition['name']}_Args",
+        __config__=ConfigDict(extra="forbid"),
+        **fields,
+    )
 
 
 def tool_name_from_class(cls) -> str:

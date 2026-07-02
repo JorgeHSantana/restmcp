@@ -195,3 +195,58 @@ def test_reject_bool_guard():
     assert _reject_bool("5") == "5"
     with pytest.raises(ValueError):
         _reject_bool(True)
+
+
+def _sample_def():
+    return {
+        "name": "typed",
+        "description": "x",
+        "parameters": {"properties": {
+            "n": {"type": "integer"},
+            "flag": {"type": "boolean", "default": False},
+            "ids": {"type": "array", "items": {"type": "integer"}, "default": None},
+        }},
+    }
+
+
+def test_build_arg_model_required_and_defaults():
+    from restmcp.schema import build_arg_model
+    M = build_arg_model(_sample_def())
+    m = M(n=5)
+    assert m.model_dump() == {"n": 5, "flag": False, "ids": None}
+
+
+def test_build_arg_model_coerces_and_guards():
+    import pytest
+    from pydantic import ValidationError
+    from restmcp.schema import build_arg_model
+    M = build_arg_model(_sample_def())
+
+    assert M(n="5").n == 5          # numeric string coerced
+    assert M(n=5.0).n == 5          # integral float coerced
+    with pytest.raises(ValidationError):
+        M(n=True)                   # anti-bool guard
+    with pytest.raises(ValidationError):
+        M(n="abc")                  # non-numeric string
+    with pytest.raises(ValidationError):
+        M()                         # missing required n
+
+
+def test_build_arg_model_forbids_extra_keys():
+    import pytest
+    from pydantic import ValidationError
+    from restmcp.schema import build_arg_model
+    M = build_arg_model(_sample_def())
+    with pytest.raises(ValidationError):
+        M(n=5, bogus=1)
+
+
+def test_build_arg_model_array_item_coercion_and_guard():
+    import pytest
+    from pydantic import ValidationError
+    from restmcp.schema import build_arg_model
+    M = build_arg_model(_sample_def())
+    assert M(n=1, ids=[1, "2"]).ids == [1, 2]     # items coerced
+    with pytest.raises(ValidationError):
+        M(n=1, ids=[1, True])                     # anti-bool on items
+    assert M(n=1, ids=None).ids is None           # explicit null ok (default None)
