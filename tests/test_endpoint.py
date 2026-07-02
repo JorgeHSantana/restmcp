@@ -639,3 +639,64 @@ def test_missing_required_reports_field_name():
     r = client.post("/api/typed", json={})
     assert r.status_code == 400
     assert "n" in r.json()["error"]
+
+
+# --- registration-time definition errors (review findings 1, 3, 4) ---
+
+def test_underscore_property_name_fails_at_class_definition():
+    with pytest.raises(TypeError, match="_secret"):
+        class Under1Endpoint(Endpoint):
+            mcp_definition = {
+                "name": "under1_tool",
+                "description": "x",
+                "parameters": {"properties": {"_secret": {"type": "string"}}},
+            }
+            url = "/api/under1"
+            method = "POST"
+            def callback(self, _secret): return {}
+
+
+def test_pydantic_reserved_property_name_fails_with_context():
+    with pytest.raises(TypeError, match="Reserved1Endpoint"):
+        class Reserved1Endpoint(Endpoint):
+            mcp_definition = {
+                "name": "reserved1_tool",
+                "description": "x",
+                "parameters": {"properties": {"model_dump": {"type": "string"}}},
+            }
+            url = "/api/reserved1"
+            method = "POST"
+            def callback(self, **kwargs): return {}
+
+
+def test_none_parameters_registers_and_serves():
+    # 'parameters': None passes _validate_mcp_definition and must keep working
+    # (review finding 3: it used to crash the import with AttributeError).
+    class NoneParams1Endpoint(Endpoint):
+        mcp_definition = {
+            "name": "none_params1_tool",
+            "description": "x",
+            "parameters": None,
+        }
+        url = "/api/none-params1"
+        method = "POST"
+        def callback(self): return {"ok": True}
+
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/none-params1", json={})
+    assert r.status_code == 200
+    assert r.json()["result"] == {"ok": True}
+
+
+def test_bad_default_fails_at_class_definition_with_context():
+    with pytest.raises((TypeError, ValueError), match="BadDefault1Endpoint|default"):
+        class BadDefault1Endpoint(Endpoint):
+            mcp_definition = {
+                "name": "bad_default1_tool",
+                "description": "x",
+                "parameters": {"properties":
+                    {"n": {"type": "integer", "default": "abc"}}},
+            }
+            url = "/api/bad-default1"
+            method = "POST"
+            def callback(self, n=0): return {"n": n}

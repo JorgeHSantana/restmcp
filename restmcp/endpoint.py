@@ -10,7 +10,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from restmcp.exceptions import RestMCPException, ValidationError
 from restmcp.logging import Logger
-from restmcp.schema import build_arg_model
+from restmcp.schema import build_arg_model, check_property_name
 
 _logger = Logger("restmcp.endpoint")
 
@@ -53,6 +53,9 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
             raise TypeError(
                 f"{cls_name}: mcp_definition['parameters']['properties'] must be a dict"
             )
+        if isinstance(props, dict):
+            for prop_name in props:
+                check_property_name(cls_name, prop_name)
 
 
 class Endpoint(ABC):
@@ -193,7 +196,13 @@ class Endpoint(ABC):
         if not getattr(self, "callback", None):
             raise ValueError(f"{self.__class__.__name__}: callback is required")
 
-        self._arg_model = build_arg_model(self.mcp_definition)
+        # Definition errors must surface with the endpoint's name, and as
+        # ValueError so __init_subclass__'s TypeError wrapper (which blames
+        # __init__ parameters) never swallows them (review findings 3, 4).
+        try:
+            self._arg_model = build_arg_model(self.mcp_definition)
+        except Exception as e:
+            raise ValueError(f"{cls.__name__}: invalid mcp_definition — {e}") from e
 
         endpoint_self = self
 
