@@ -54,3 +54,23 @@ def test_autodiscover_skips_underscore_modules(tmp_path, monkeypatch):
 def test_autodiscover_rejects_non_package():
     with pytest.raises(ValueError):
         autodiscover("os.path")  # a module, not a package
+
+
+def test_autodiscover_recurses_into_subpackages(tmp_path, monkeypatch):
+    import sys
+
+    from restmcp.discovery import autodiscover
+
+    pkg = tmp_path / "eps_recursion_pkg"
+    sub = pkg / "admin"
+    sub.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (sub / "__init__.py").write_text("")
+    (sub / "nested_mod.py").write_text("LOADED = True\n")
+    (sub / "_private_mod.py").write_text("raise AssertionError('must be skipped')\n")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    autodiscover("eps_recursion_pkg")
+
+    assert "eps_recursion_pkg.admin.nested_mod" in sys.modules
+    assert "eps_recursion_pkg.admin._private_mod" not in sys.modules
