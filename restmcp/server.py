@@ -35,8 +35,14 @@ class Server:
         self._rest.register_handler(handler)
 
     def start(self, host: str = "0.0.0.0", port: int = 5000, reload: bool = False):
+        if reload:
+            raise ValueError(
+                "reload=True has no effect when passing an app object to uvicorn "
+                "(it requires an import string). Run uvicorn directly instead: "
+                "`uvicorn main:app --reload`."
+            )
         import uvicorn
-        uvicorn.run(self.app, host=host, port=port, reload=reload)
+        uvicorn.run(self.app, host=host, port=port)
 
     def get_mcp(self):
         """Return the underlying FastMCP instance (built once, then memoized).
