@@ -208,3 +208,23 @@ def test_mcp_tool_annotation_uses_shared_mapping():
     # base type is int and it carries the same BeforeValidator metadata
     assert get_args(ann)[0] is int
     assert get_args(ann)[1:] == get_args(python_type_for({"type": "integer"}))[1:]
+
+
+def test_mcp_signature_uses_field_spec_for_coerced_default():
+    # The optionality convention and default coercion must come from
+    # field_spec_for, not a local copy (review finding 8 / finding 5 on MCP).
+    class _Handler:
+        mcp_definition = {
+            "name": "spec_shared_tool",
+            "description": "x",
+            "parameters": {"properties": {
+                "n": {"type": "integer", "default": "10"},
+                "ids": {"type": "array", "items": {"type": "integer"},
+                        "default": None},
+            }},
+        }
+        def callback(self, n=0, ids=None): return {"n": n}
+
+    p = _params(_func(_Handler()))
+    assert p["n"].default == 10 and isinstance(p["n"].default, int)
+    assert type(None) in getattr(_base_type(p["ids"].annotation), "__args__", ())

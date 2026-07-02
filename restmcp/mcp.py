@@ -1,4 +1,9 @@
-from typing import Any, List, Optional
+import inspect
+from typing import Annotated, Any, List
+
+from pydantic import Field
+
+from restmcp.schema import field_spec_for
 
 
 class McpApp:
@@ -21,28 +26,19 @@ class McpApp:
         mcp.add_tool(self._build_tool_function(handler))
 
     def _build_tool_function(self, handler: Any):
-        import inspect
-        from typing import Annotated
-
-        from pydantic import Field
-
+        # run_callback stays a local import: endpoint -> server -> mcp is a
+        # real cycle at module level.
         from restmcp.endpoint import run_callback
-        from restmcp.schema import python_type_for
 
         def_dict = handler.mcp_definition
         name = def_dict["name"]
         description = def_dict["description"]
-        properties = def_dict.get("parameters", {}).get("properties", {})
+        properties = (def_dict.get("parameters") or {}).get("properties") or {}
 
         parameters = []
         annotations = {}
         for prop_name, prop_data in properties.items():
-            py_type = python_type_for(prop_data)
-
-            has_default = "default" in prop_data
-            default_val = prop_data.get("default")
-            if has_default and default_val is None:
-                py_type = Optional[py_type]
+            py_type, default_val = field_spec_for(prop_name, prop_data)
 
             prop_desc = prop_data.get("description")
             annotation = (
@@ -50,13 +46,12 @@ class McpApp:
             )
             annotations[prop_name] = annotation
 
-            if has_default:
+            if default_val is ...:
                 parameters.append(
                     inspect.Parameter(
                         prop_name,
                         inspect.Parameter.KEYWORD_ONLY,
                         annotation=annotation,
-                        default=default_val,
                     )
                 )
             else:
@@ -65,6 +60,7 @@ class McpApp:
                         prop_name,
                         inspect.Parameter.KEYWORD_ONLY,
                         annotation=annotation,
+                        default=default_val,
                     )
                 )
 
