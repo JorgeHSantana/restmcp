@@ -68,7 +68,15 @@ class Endpoint(ABC):
             return
 
         _required = ("url", "method", "callback")
-        if all(vars(cls).get(attr) for attr in _required):
+        present = [attr for attr in _required if vars(cls).get(attr)]
+        if present and len(present) < len(_required):
+            missing = ", ".join(a for a in _required if a not in present)
+            raise TypeError(
+                f"{cls.__name__}: incomplete endpoint definition — missing: {missing}. "
+                f"Define url, method and callback together, or set disabled = True "
+                f"on an intermediate base class."
+            )
+        if len(present) == len(_required):
             if "mcp_definition" not in vars(cls):
                 from restmcp.schema import build_mcp_definition, has_returns_doc
 

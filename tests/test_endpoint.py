@@ -78,6 +78,26 @@ def test_mcp_definition_bad_properties_raises():
             def callback(self): pass
 
 
+# --- partial definitions fail loudly at class-definition time ---
+
+def test_partial_endpoint_definition_raises():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*method"):
+        class TypoEndpoint(Endpoint):
+            url = "/api/typo"
+            metod = "POST"  # typo: 'method' missing
+            def callback(self):
+                """X.
+
+                Returns: x.
+                """
+                return {}
+
+
+def test_base_class_with_no_attrs_is_allowed():
+    class SharedBaseEndpoint(Endpoint):
+        pass  # no url/method/callback: intermediate base, nothing registered
+
+
 # --- validation errors on missing attributes ---
 
 def test_endpoint_infers_mcp_definition_when_absent():
@@ -94,33 +114,28 @@ def test_endpoint_infers_mcp_definition_when_absent():
     assert handler.mcp_definition["name"] == "infer_def"
 
 
-def test_endpoint_requires_url():
-    class NoUrlEndpoint(Endpoint):
-        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-        method = "POST"
-        def callback(self): pass
-
-    with pytest.raises(ValueError, match="url"):
-        NoUrlEndpoint()
+def test_endpoint_missing_url_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*url"):
+        class NoUrlEndpoint(Endpoint):
+            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+            method = "POST"
+            def callback(self): pass
 
 
-def test_endpoint_requires_method():
-    class NoMethodEndpoint(Endpoint):
-        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-        url = "/x"
-        def callback(self): pass
-
-    with pytest.raises(ValueError, match="method"):
-        NoMethodEndpoint()
+def test_endpoint_missing_method_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*method"):
+        class NoMethodEndpoint(Endpoint):
+            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+            url = "/x"
+            def callback(self): pass
 
 
-def test_endpoint_requires_callback():
-    with pytest.raises(ValueError, match="callback"):
+def test_endpoint_missing_callback_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*callback"):
         class NoCallbackEndpoint(Endpoint):
             mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
             url = "/x"
             method = "POST"
-        NoCallbackEndpoint()
 
 
 # --- auto-registration ---
@@ -172,7 +187,10 @@ def test_endpoint_disabled_can_be_instantiated_manually():
 # --- abstract base class (no auto-registration without required attrs) ---
 
 def test_abstract_base_endpoint_not_auto_registered():
+    # An intermediate base that shares a callback but is not itself an endpoint
+    # opts out with disabled = True (a partial definition otherwise raises).
     class BaseCustomEndpoint(Endpoint):
+        disabled = True
         method = "POST"
         def callback(self, **kwargs): return {}
 
