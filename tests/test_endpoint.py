@@ -400,3 +400,23 @@ def test_endpoint_service_not_found_propagates_as_404():
     response = client.post("/api/fullstack-notfound", json={"item_id": "missing"})
     assert response.status_code == 404
     assert response.json()["error_type"] == "NotFoundError"
+
+
+# --- client errors must be 400, not 500 ---
+
+def test_non_object_json_body_returns_400():
+    _make_get_item_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/get-item", json=[1, 2, 3])
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
+
+
+def test_missing_required_param_returns_400():
+    _make_get_item_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/get-item", json={})
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_type"] == "ValidationError"
+    assert "item_id" in body["error"]

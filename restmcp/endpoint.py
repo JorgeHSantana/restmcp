@@ -107,8 +107,11 @@ class Endpoint(ABC):
             try:
                 data = await request.json()
             except Exception:
+                data = None
+            if data is None:
                 data = {}
-            data = data or {}
+            if not isinstance(data, dict):
+                raise ValidationError("Request body must be a JSON object")
 
             valid_params = self.mcp_definition.get("parameters", {}).get("properties", {})
             parameters = {}
@@ -117,6 +120,18 @@ class Endpoint(ABC):
                 if key not in valid_params:
                     raise ValidationError(f"Invalid parameter: {key}")
                 parameters[key] = value
+
+            # A property without a "default" key is required (same convention
+            # the MCP path uses when building the pydantic signature).
+            missing = [
+                name
+                for name, schema in valid_params.items()
+                if "default" not in schema and name not in parameters
+            ]
+            if missing:
+                raise ValidationError(
+                    f"Missing required parameter(s): {', '.join(sorted(missing))}"
+                )
 
             result = await run_callback(self.callback, **parameters)
 
