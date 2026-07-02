@@ -99,7 +99,9 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
 class Endpoint(ABC):
     """HTTP + MCP endpoint. Subclasses auto-register on class definition when url,
     method, and callback are set; mcp_definition is inferred from the callback
-    signature when not provided explicitly."""
+    signature when not provided explicitly. REST parameters are accepted from
+    the query string and/or the JSON body (body wins on conflicts) and are
+    validated against mcp_definition before reaching the callback."""
 
     disabled: bool = False
 
@@ -152,13 +154,19 @@ class Endpoint(ABC):
     async def _callback(self, request: Request):
         try:
             try:
-                data = await request.json()
+                body = await request.json()
             except Exception:
-                data = None
-            if data is None:
-                data = {}
-            if not isinstance(data, dict):
+                body = None
+            if body is None:
+                body = {}
+            if not isinstance(body, dict):
                 raise ValidationError("Request body must be a JSON object")
+
+            # Accept parameters from the query string too (GET endpoints have
+            # no practical body); JSON body wins on conflicts. Query values
+            # are strings — _coerce_param converts them to the declared type.
+            data = dict(request.query_params)
+            data.update(body)
 
             valid_params = self.mcp_definition.get("parameters", {}).get("properties", {})
             parameters = {}

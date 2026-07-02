@@ -484,3 +484,46 @@ def test_explicit_null_allowed_when_default_is_none():
     response = client.post("/api/nullable", json={"ids": None})
     assert response.status_code == 200
     assert response.json()["result"]["ids"] is None
+
+
+# --- query-string parameters (GET endpoints) ---
+
+def test_get_endpoint_reads_query_params():
+    class QueryEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "query_tool",
+            "description": "query params",
+            "parameters": {"properties": {
+                "q": {"type": "string", "default": "none"},
+                "n": {"type": "integer", "default": 0},
+            }},
+        }
+        url = "/api/query"
+        method = "GET"
+
+        def callback(self, q: str = "none", n: int = 0):
+            return {"q": q, "n": n}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.get("/api/query?q=hello&n=7")
+    assert response.status_code == 200
+    assert response.json()["result"] == {"q": "hello", "n": 7}
+
+
+def test_unknown_query_param_returns_400():
+    class Query2Endpoint(Endpoint):
+        mcp_definition = {
+            "name": "query2_tool",
+            "description": "query params",
+            "parameters": {"properties": {"q": {"type": "string", "default": "none"}}},
+        }
+        url = "/api/query2"
+        method = "GET"
+
+        def callback(self, q: str = "none"):
+            return {"q": q}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.get("/api/query2?nope=1")
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
