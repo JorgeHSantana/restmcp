@@ -72,6 +72,24 @@ def _unwrap_optional(annotation):
     return annotation
 
 
+def _unwrap_annotation(annotation) -> tuple:
+    """Strip Annotated/Optional wrappers in any nesting order.
+
+    ``Annotated[Optional[int], "d"]``, ``Optional[Annotated[int, "d"]]`` and
+    deeper mixes all reduce to ``(int, "d")``. The first (outermost) string
+    metadata found wins as the description.
+    """
+    description = None
+    while True:
+        base, desc = _unwrap_annotated(annotation)
+        if description is None and desc is not None:
+            description = desc
+        base = _unwrap_optional(base)
+        if base is annotation:
+            return base, description
+        annotation = base
+
+
 def build_parameters(callback) -> dict:
     """Build the MCP ``parameters`` dict from a callback's signature.
 
@@ -94,8 +112,7 @@ def build_parameters(callback) -> dict:
             continue
 
         annotation = hints.get(pname, param.annotation)
-        base, description = _unwrap_annotated(annotation)
-        base = _unwrap_optional(base)
+        base, description = _unwrap_annotation(annotation)
 
         schema = schema_for_annotation(base)
         if description:

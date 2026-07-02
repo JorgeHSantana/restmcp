@@ -128,3 +128,30 @@ def test_build_mcp_definition_description_falls_back_to_name():
     assert definition["name"] == "ping"
     assert definition["description"] == "ping"
     assert definition["parameters"] == {"properties": {}}
+
+
+def test_optional_wrapping_annotated_keeps_type_and_description():
+    from typing import Annotated, Optional
+
+    from restmcp.schema import build_parameters
+
+    def cb(self, a: Optional[Annotated[int, "device id"]] = None):
+        pass
+
+    props = build_parameters(cb)["properties"]
+    assert props["a"]["type"] == "integer"
+    assert props["a"]["description"] == "device id"
+    assert props["a"]["default"] is None
+
+
+def test_annotated_wrapping_optional_still_works():
+    from typing import Annotated, Optional
+
+    from restmcp.schema import build_parameters
+
+    def cb(self, a: Annotated[Optional[int], "device id"] = None):
+        pass
+
+    props = build_parameters(cb)["properties"]
+    assert props["a"]["type"] == "integer"
+    assert props["a"]["description"] == "device id"
