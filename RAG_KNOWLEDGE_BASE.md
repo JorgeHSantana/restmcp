@@ -443,7 +443,7 @@ Error:
 { "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
 ```
 
-REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5` — with one deliberate guard: a boolean is rejected where a number is expected. An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
+REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
 ---
 
@@ -825,7 +825,8 @@ The `Service` accepts the `repo=...` override; the `Repository` accepts the `dat
 | "Task group is not initialized" on the first MCP request | MCP mounted manually with `server.app.mount(...)`. | Use `server.asgi_app()`, which wires the FastMCP lifespan. |
 | HTTP 401 on all protected routes | `AUTH_API_KEY` set and token missing or incorrect in the header. | Send `Authorization: Bearer <key>` with a valid key. |
 | Endpoint not showing up in `/mcp/tools` | Missing `autodiscover("endpoints")`, or the file starts with `_`, or `url`/`method`/`callback` missing, or `disabled = True`. | Ensure autodiscover, the file name, and the required attributes. |
-| `ValidationError` "Invalid parameter" | The JSON body contains a key not present in the schema properties. | Send only the parameters declared in the callback. |
+| `ValidationError` "Extra inputs are not permitted" | The JSON body contains a key not present in the schema properties. | Send only the parameters declared in the callback. |
+| `TypeError` "invalid parameter name" at import | A property name starts with `_`/`model_` or is not a valid identifier. | Rename the parameter (pydantic reserves those forms). |
 | Event loop stalling under load | A blocking call inside an `async def` callback. | Use async I/O in the async callback, or make the callback synchronous (runs in a thread pool). |
 
 ---
