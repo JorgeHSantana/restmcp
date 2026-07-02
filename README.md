@@ -66,6 +66,18 @@ my-server/
 
 ---
 
+## Breaking changes in 0.2.0
+
+Definition errors now fail at **registration (import time)** instead of per-request, always naming the endpoint class or tool:
+
+- Parameter names starting with `_` or `model_` (or that are not valid Python identifiers) are rejected — pydantic silently dropped or refused them before.
+- A declared `default` that does not match its declared type is rejected (defaults are now validated and coerced at registration).
+- The callback signature must accept every declared property (defaults included) — on 0.1.x this worked on REST and broke only on MCP.
+
+Runtime changes: unknown query-string parameters are now ignored (previously HTTP 400); REST and MCP now validate identically via one shared pydantic model, so HTTP 400 messages are pydantic-style (e.g. "Extra inputs are not permitted"); explicit JSON `null` is accepted only when the property's default is `null`; pydantic-lax boolean inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`) are accepted.
+
+---
+
 ## How it works
 
 ```mermaid

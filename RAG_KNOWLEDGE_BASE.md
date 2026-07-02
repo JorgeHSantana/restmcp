@@ -2,7 +2,7 @@
 
 Technical reference document for the Python framework **restmcp**.
 
-- Framework version documented: **0.1.6**
+- Framework version documented: **0.2.0**
 - PyPI package: `restmcp`
 - License: MIT
 - Supported Python: 3.11, 3.12, 3.13
@@ -18,7 +18,7 @@ Guidance for the agent and for whoever maintains this file:
 - **Source of truth.** Answer questions about restmcp using the content below. When a question is not covered here, say so instead of guessing.
 - **Self-contained sections.** Each numbered section is written to stand on its own, so a chunk retrieved in isolation still carries enough context to be useful.
 - **Concrete examples.** Most concepts are paired with runnable code examples and, where relevant, the exact inferred output. Prefer citing these examples when explaining a concept.
-- **Version-scoped.** Everything here describes restmcp at version 0.1.6 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
+- **Version-scoped.** Everything here describes restmcp at version 0.2.0 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
 
 ---
 
@@ -854,7 +854,7 @@ Symbols exported by `restmcp` (via `from restmcp import ...`):
 
 ## 28. Example catalog by scenario
 
-This section collects short, focused recipes, one per common need. All examples apply to restmcp 0.1.6.
+This section collects short, focused recipes, one per common need. All examples apply to restmcp 0.2.0.
 
 ### 28.1 Minimal endpoint with one required parameter
 
@@ -1705,4 +1705,4 @@ async def callback(self, product_id: str) -> dict:
 
 ## 32. Summary
 
-restmcp 0.1.6 turns annotated Python classes into MCP tools and REST endpoints simultaneously, with a five-layer architecture (DataSource, Entity, Repository, Service, Endpoint), auto-registration at class definition, dependency injection by isolated copy, and transparent support for synchronous and asynchronous callbacks. The MCP tool definition is inferred from the callback signature and docstring, requiring a `Returns:` section that describes the return value for the MCP client. A single `asgi_app()` serves REST and MCP with optional Bearer authentication, and the tool catalog is available at `/mcp/tools`.
+restmcp 0.2.0 turns annotated Python classes into MCP tools and REST endpoints simultaneously, with a five-layer architecture (DataSource, Entity, Repository, Service, Endpoint), auto-registration at class definition, dependency injection by isolated copy, and transparent support for synchronous and asynchronous callbacks. The MCP tool definition is inferred from the callback signature and docstring, requiring a `Returns:` section that describes the return value for the MCP client. A single `asgi_app()` serves REST and MCP with optional Bearer authentication, and the tool catalog is available at `/mcp/tools`.
