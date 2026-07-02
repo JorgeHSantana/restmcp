@@ -2,9 +2,54 @@ import inspect
 import re
 import types
 import typing
-from typing import Any
+from typing import Annotated, Any, Dict, List
+
+from pydantic import BeforeValidator
 
 _PRIMITIVES = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+
+def _reject_bool(v):
+    """Reject a bool where a number is expected.
+
+    pydantic-lax would coerce True->1 / False->0; that is the one genuinely
+    surprising coercion, so we forbid it. Applied to integer and number so REST
+    and MCP agree and the behavior is predictable.
+    """
+    if isinstance(v, bool):
+        raise ValueError("expected a number, got a boolean")
+    return v
+
+
+def python_type_for(prop: dict):
+    """Map one mcp_definition property schema to a Python type annotation.
+
+    integer -> Annotated[int,   BeforeValidator(_reject_bool)]
+    number  -> Annotated[float, BeforeValidator(_reject_bool)]
+    string  -> str
+    boolean -> bool
+    array   -> List[<item type via python_type_for>]   (default item: str)
+    object  -> Dict[str, Any]
+    unknown / missing type -> str
+
+    Optionality is NOT applied here: the caller wraps Optional[...] when the
+    property declares a default of None. This is the single source of truth for
+    the JSON-schema-type -> Python-type mapping, shared by the REST model
+    builder (build_arg_model) and the MCP signature builder (mcp.py).
+    """
+    t = prop.get("type")
+    if t == "integer":
+        return Annotated[int, BeforeValidator(_reject_bool)]
+    if t == "number":
+        return Annotated[float, BeforeValidator(_reject_bool)]
+    if t == "boolean":
+        return bool
+    if t == "array":
+        item = python_type_for(prop.get("items") or {"type": "string"})
+        return List[item]
+    if t == "object":
+        return Dict[str, Any]
+    return str
 
 
 def tool_name_from_class(cls) -> str:

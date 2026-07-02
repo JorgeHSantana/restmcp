@@ -155,3 +155,43 @@ def test_annotated_wrapping_optional_still_works():
     props = build_parameters(cb)["properties"]
     assert props["a"]["type"] == "integer"
     assert props["a"]["description"] == "device id"
+
+
+def test_python_type_for_primitives():
+    from typing import Annotated, get_origin, get_args
+    from restmcp.schema import python_type_for
+
+    assert python_type_for({"type": "string"}) is str
+    assert python_type_for({"type": "boolean"}) is bool
+    # integer/number carry the anti-bool BeforeValidator, so they are Annotated
+    int_ann = python_type_for({"type": "integer"})
+    assert get_args(int_ann)[0] is int
+    num_ann = python_type_for({"type": "number"})
+    assert get_args(num_ann)[0] is float
+
+
+def test_python_type_for_array_and_object():
+    from typing import List, Dict, Any, get_origin, get_args
+    from restmcp.schema import python_type_for
+
+    arr = python_type_for({"type": "array", "items": {"type": "string"}})
+    assert get_origin(arr) is list
+    assert get_args(arr)[0] is str
+
+    obj = python_type_for({"type": "object"})
+    assert get_origin(obj) is dict
+
+
+def test_python_type_for_unknown_defaults_to_string():
+    from restmcp.schema import python_type_for
+    assert python_type_for({}) is str
+    assert python_type_for({"type": "banana"}) is str
+
+
+def test_reject_bool_guard():
+    import pytest
+    from restmcp.schema import _reject_bool
+    assert _reject_bool(5) == 5
+    assert _reject_bool("5") == "5"
+    with pytest.raises(ValueError):
+        _reject_bool(True)
