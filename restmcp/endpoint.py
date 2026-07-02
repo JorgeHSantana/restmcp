@@ -7,6 +7,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from restmcp.exceptions import RestMCPException, ValidationError
+from restmcp.logging import Logger
+
+_logger = Logger("restmcp.endpoint")
 
 
 async def run_callback(callback: object, /, **kwargs):
@@ -23,6 +26,53 @@ async def run_callback(callback: object, /, **kwargs):
         return await callback(**kwargs)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: callback(**kwargs))
+
+
+def _coerce_param(name: str, value: object, schema: dict):
+    """Validate/coerce one REST parameter against its mcp_definition schema.
+
+    JSON body values arrive typed; query-string values (Task: GET support)
+    arrive as str and are coerced to the declared type. Mirrors the MCP path,
+    where pydantic enforces the same schema. Raises ValidationError (400) on
+    mismatch. An explicit null is accepted when the schema declares a default
+    (i.e. the parameter is optional).
+    """
+    expected = schema.get("type", "string")
+    if value is None and "default" in schema:
+        return None
+    if expected == "string":
+        if isinstance(value, str):
+            return value
+    elif expected == "integer":
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                pass
+    elif expected == "number":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                pass
+    elif expected == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false", "1", "0"):
+            return value.lower() in ("true", "1")
+    elif expected == "array":
+        if isinstance(value, list):
+            return value
+    elif expected == "object":
+        if isinstance(value, dict):
+            return value
+    raise ValidationError(
+        f"Invalid value for parameter '{name}': expected {expected}"
+    )
 
 
 def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
@@ -52,9 +102,12 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
 class Endpoint(ABC):
     """HTTP + MCP endpoint. Subclasses auto-register on class definition when url,
     method, and callback are set; mcp_definition is inferred from the callback
-    signature when not provided explicitly."""
+    signature when not provided explicitly. REST parameters are accepted from
+    the query string and/or the JSON body (body wins on conflicts) and are
+    validated against mcp_definition before reaching the callback."""
 
     disabled: bool = False
+    _registered: bool = False  # per-subclass; set after successful registration
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -68,7 +121,15 @@ class Endpoint(ABC):
             return
 
         _required = ("url", "method", "callback")
-        if all(vars(cls).get(attr) for attr in _required):
+        present = [attr for attr in _required if vars(cls).get(attr)]
+        if present and len(present) < len(_required):
+            missing = ", ".join(a for a in _required if a not in present)
+            raise TypeError(
+                f"{cls.__name__}: incomplete endpoint definition — missing: {missing}. "
+                f"Define url, method and callback together, or set disabled = True "
+                f"on an intermediate base class."
+            )
+        if len(present) == len(_required):
             if "mcp_definition" not in vars(cls):
                 from restmcp.schema import build_mcp_definition, has_returns_doc
 
@@ -97,10 +158,19 @@ class Endpoint(ABC):
     async def _callback(self, request: Request):
         try:
             try:
-                data = await request.json()
+                body = await request.json()
             except Exception:
-                data = {}
-            data = data or {}
+                body = None
+            if body is None:
+                body = {}
+            if not isinstance(body, dict):
+                raise ValidationError("Request body must be a JSON object")
+
+            # Accept parameters from the query string too (GET endpoints have
+            # no practical body); JSON body wins on conflicts. Query values
+            # are strings — _coerce_param converts them to the declared type.
+            data = dict(request.query_params)
+            data.update(body)
 
             valid_params = self.mcp_definition.get("parameters", {}).get("properties", {})
             parameters = {}
@@ -108,7 +178,19 @@ class Endpoint(ABC):
             for key, value in data.items():
                 if key not in valid_params:
                     raise ValidationError(f"Invalid parameter: {key}")
-                parameters[key] = value
+                parameters[key] = _coerce_param(key, value, valid_params[key])
+
+            # A property without a "default" key is required (same convention
+            # the MCP path uses when building the pydantic signature).
+            missing = [
+                name
+                for name, schema in valid_params.items()
+                if "default" not in schema and name not in parameters
+            ]
+            if missing:
+                raise ValidationError(
+                    f"Missing required parameter(s): {', '.join(sorted(missing))}"
+                )
 
             result = await run_callback(self.callback, **parameters)
 
@@ -126,9 +208,14 @@ class Endpoint(ABC):
                 "error_type": e.__class__.__name__,
             }), status_code=e.status_code)
 
-        except Exception as e:
+        except Exception:
+            # Full traceback goes to the server log; the client gets a
+            # generic message so internals never leak into responses.
+            _logger.error(
+                "Unhandled error in tool %r", self.mcp_definition["name"], exc_info=True
+            )
             return JSONResponse(jsonable_encoder({
-                "error": str(e),
+                "error": "Internal server error",
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": "InternalServerError",
@@ -137,6 +224,13 @@ class Endpoint(ABC):
     def __init__(self):
         from restmcp.server import Server
         from restmcp.rest import _auth_dependency
+
+        cls = type(self)
+        # Idempotency guard (issue #10): a second instantiation (manual call,
+        # module reload) must not re-register the route. Checked via vars() so
+        # a subclass never inherits its parent's "already registered" state.
+        if vars(cls).get("_registered", False):
+            return
 
         self.mcp_definition = getattr(self, "mcp_definition", None)
         if not self.mcp_definition:
@@ -159,10 +253,18 @@ class Endpoint(ABC):
             return await endpoint_self._callback(request)
 
         server = Server.get_instance()
-        server.app.add_api_route(
-            self.url,
-            route_handler,
-            methods=[self.method],
-            dependencies=[Depends(_auth_dependency)],
-        )
+        # Atomic registration (issue #10): in-memory append first (cheap,
+        # can't half-fail), ASGI route last, rollback on failure — never a
+        # route without a handler or a handler without a route.
         server.register_url_handler(self)
+        try:
+            server.app.add_api_route(
+                self.url,
+                route_handler,
+                methods=[self.method],
+                dependencies=[Depends(_auth_dependency)],
+            )
+        except Exception:
+            server.unregister_url_handler(self)
+            raise
+        cls._registered = True

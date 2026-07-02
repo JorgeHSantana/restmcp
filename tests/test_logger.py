@@ -29,8 +29,11 @@ def test_logger_has_debug_method():
 
 def test_logger_does_not_raise_on_use(caplog):
     logger = Logger("test.logger")
-    with caplog.at_level(logging.INFO, logger="test.logger"):
-        logger.info("mensagem de teste")
+    # Logger sets propagate=False, so records never reach caplog's root
+    # handler; attach caplog's handler to the logger directly to capture.
+    logger._logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="test.logger")
+    logger.info("mensagem de teste")
     assert "mensagem de teste" in caplog.text
 
 
@@ -48,20 +51,31 @@ def test_logger_level_from_env(monkeypatch):
 
 def test_logger_warning(caplog):
     logger = Logger("test.warning")
-    with caplog.at_level(logging.WARNING, logger="test.warning"):
-        logger.warning("warn msg")
+    logger._logger.addHandler(caplog.handler)
+    caplog.set_level(logging.WARNING, logger="test.warning")
+    logger.warning("warn msg")
     assert "warn msg" in caplog.text
 
 
 def test_logger_error(caplog):
     logger = Logger("test.error")
-    with caplog.at_level(logging.ERROR, logger="test.error"):
-        logger.error("error msg")
+    logger._logger.addHandler(caplog.handler)
+    caplog.set_level(logging.ERROR, logger="test.error")
+    logger.error("error msg")
     assert "error msg" in caplog.text
 
 
 def test_logger_debug(caplog):
     logger = Logger("test.debug")
-    with caplog.at_level(logging.DEBUG, logger="test.debug"):
-        logger.debug("debug msg")
+    logger._logger.addHandler(caplog.handler)
+    caplog.set_level(logging.DEBUG, logger="test.debug")
+    logger.debug("debug msg")
     assert "debug msg" in caplog.text
+
+
+def test_logger_does_not_propagate_to_root():
+    from restmcp.logging import Logger
+
+    # Without propagate=False, an app that configures the root logger
+    # (logging.basicConfig) sees every message twice.
+    assert Logger("propagate_check")._logger.propagate is False

@@ -126,3 +126,8 @@ def test_auth_multiple_keys_accepted(monkeypatch):
     client = TestClient(Server.get_instance().app)
     assert client.post("/api/authed", json={}, headers={"Authorization": "Bearer key2"}).status_code == 200
     assert client.post("/api/authed", json={}, headers={"Authorization": "Bearer key3"}).status_code == 200
+
+
+def test_start_with_reload_raises():
+    with pytest.raises(ValueError, match="reload"):
+        Server.get_instance().start(reload=True)

@@ -78,6 +78,26 @@ def test_mcp_definition_bad_properties_raises():
             def callback(self): pass
 
 
+# --- partial definitions fail loudly at class-definition time ---
+
+def test_partial_endpoint_definition_raises():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*method"):
+        class TypoEndpoint(Endpoint):
+            url = "/api/typo"
+            metod = "POST"  # typo: 'method' missing
+            def callback(self):
+                """X.
+
+                Returns: x.
+                """
+                return {}
+
+
+def test_base_class_with_no_attrs_is_allowed():
+    class SharedBaseEndpoint(Endpoint):
+        pass  # no url/method/callback: intermediate base, nothing registered
+
+
 # --- validation errors on missing attributes ---
 
 def test_endpoint_infers_mcp_definition_when_absent():
@@ -94,33 +114,28 @@ def test_endpoint_infers_mcp_definition_when_absent():
     assert handler.mcp_definition["name"] == "infer_def"
 
 
-def test_endpoint_requires_url():
-    class NoUrlEndpoint(Endpoint):
-        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-        method = "POST"
-        def callback(self): pass
-
-    with pytest.raises(ValueError, match="url"):
-        NoUrlEndpoint()
+def test_endpoint_missing_url_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*url"):
+        class NoUrlEndpoint(Endpoint):
+            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+            method = "POST"
+            def callback(self): pass
 
 
-def test_endpoint_requires_method():
-    class NoMethodEndpoint(Endpoint):
-        mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
-        url = "/x"
-        def callback(self): pass
-
-    with pytest.raises(ValueError, match="method"):
-        NoMethodEndpoint()
+def test_endpoint_missing_method_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*method"):
+        class NoMethodEndpoint(Endpoint):
+            mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
+            url = "/x"
+            def callback(self): pass
 
 
-def test_endpoint_requires_callback():
-    with pytest.raises(ValueError, match="callback"):
+def test_endpoint_missing_callback_raises_at_definition():
+    with pytest.raises(TypeError, match="incomplete endpoint definition.*callback"):
         class NoCallbackEndpoint(Endpoint):
             mcp_definition = {"name": "x", "description": "x", "parameters": {"properties": {}}}
             url = "/x"
             method = "POST"
-        NoCallbackEndpoint()
 
 
 # --- auto-registration ---
@@ -172,7 +187,10 @@ def test_endpoint_disabled_can_be_instantiated_manually():
 # --- abstract base class (no auto-registration without required attrs) ---
 
 def test_abstract_base_endpoint_not_auto_registered():
+    # An intermediate base that shares a callback but is not itself an endpoint
+    # opts out with disabled = True (a partial definition otherwise raises).
     class BaseCustomEndpoint(Endpoint):
+        disabled = True
         method = "POST"
         def callback(self, **kwargs): return {}
 
@@ -382,3 +400,209 @@ def test_endpoint_service_not_found_propagates_as_404():
     response = client.post("/api/fullstack-notfound", json={"item_id": "missing"})
     assert response.status_code == 404
     assert response.json()["error_type"] == "NotFoundError"
+
+
+# --- client errors must be 400, not 500 ---
+
+def test_non_object_json_body_returns_400():
+    _make_get_item_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/get-item", json=[1, 2, 3])
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
+
+
+def test_missing_required_param_returns_400():
+    _make_get_item_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/get-item", json={})
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_type"] == "ValidationError"
+    assert "item_id" in body["error"]
+
+
+# --- REST type validation mirrors the MCP (pydantic) path ---
+
+def _make_typed_endpoint():
+    class TypedEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "typed_tool",
+            "description": "typed params",
+            "parameters": {"properties": {
+                "n": {"type": "integer"},
+                "flag": {"type": "boolean", "default": False},
+            }},
+        }
+        url = "/api/typed"
+        method = "POST"
+
+        def callback(self, n: int, flag: bool = False):
+            return {"n": n, "flag": flag}
+
+
+def test_wrong_type_returns_400():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": "abc"})
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
+
+
+def test_correct_types_pass_through():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": 5, "flag": True})
+    assert response.status_code == 200
+    assert response.json()["result"] == {"n": 5, "flag": True}
+
+
+def test_numeric_string_is_coerced():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": "5"})
+    assert response.status_code == 200
+    assert response.json()["result"]["n"] == 5
+
+
+def test_explicit_null_allowed_when_default_is_none():
+    class NullableEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "nullable_tool",
+            "description": "nullable param",
+            "parameters": {"properties": {
+                "ids": {"type": "array", "items": {"type": "integer"}, "default": None},
+            }},
+        }
+        url = "/api/nullable"
+        method = "POST"
+
+        def callback(self, ids: list | None = None):
+            return {"ids": ids}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/nullable", json={"ids": None})
+    assert response.status_code == 200
+    assert response.json()["result"]["ids"] is None
+
+
+# --- query-string parameters (GET endpoints) ---
+
+def test_get_endpoint_reads_query_params():
+    class QueryEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "query_tool",
+            "description": "query params",
+            "parameters": {"properties": {
+                "q": {"type": "string", "default": "none"},
+                "n": {"type": "integer", "default": 0},
+            }},
+        }
+        url = "/api/query"
+        method = "GET"
+
+        def callback(self, q: str = "none", n: int = 0):
+            return {"q": q, "n": n}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.get("/api/query?q=hello&n=7")
+    assert response.status_code == 200
+    assert response.json()["result"] == {"q": "hello", "n": 7}
+
+
+def test_unknown_query_param_returns_400():
+    class Query2Endpoint(Endpoint):
+        mcp_definition = {
+            "name": "query2_tool",
+            "description": "query params",
+            "parameters": {"properties": {"q": {"type": "string", "default": "none"}}},
+        }
+        url = "/api/query2"
+        method = "GET"
+
+        def callback(self, q: str = "none"):
+            return {"q": q}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.get("/api/query2?nope=1")
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
+
+
+def test_internal_error_does_not_leak_details():
+    class LeakEndpoint(Endpoint):
+        mcp_definition = {"name": "leak_tool", "description": "leak", "parameters": {"properties": {}}}
+        url = "/api/leak"
+        method = "POST"
+
+        def callback(self):
+            raise RuntimeError("secret internal detail")
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/leak", json={})
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"] == "Internal server error"
+    assert "secret internal detail" not in str(body)
+
+
+# --- registration is idempotent and atomic (issue #10) ---
+
+def test_double_instantiation_does_not_duplicate_route():
+    class DupEndpoint(Endpoint):
+        mcp_definition = {"name": "dup_tool", "description": "dup", "parameters": {"properties": {}}}
+        url = "/api/dup"
+        method = "POST"
+        def callback(self):
+            return {}
+
+    server = Server.get_instance()
+
+    def route_count():
+        return len([r for r in server.app.routes if getattr(r, "path", None) == "/api/dup"])
+
+    assert route_count() == 1
+    assert len(server.url_handlers) == 1
+    DupEndpoint()  # manual second instantiation must be a no-op
+    assert route_count() == 1
+    assert len(server.url_handlers) == 1
+
+
+def test_handler_registration_failure_leaves_no_orphan_route(monkeypatch):
+    server = Server.get_instance()
+
+    def boom(handler):
+        raise RuntimeError("handler list exploded")
+
+    monkeypatch.setattr(server, "register_url_handler", boom)
+
+    with pytest.raises(RuntimeError, match="handler list exploded"):
+        class Orphan2Endpoint(Endpoint):
+            mcp_definition = {"name": "orphan2_tool", "description": "orphan", "parameters": {"properties": {}}}
+            url = "/api/orphan2"
+            method = "POST"
+            def callback(self):
+                return {}
+
+    # with append-first ordering, the ASGI route must never have been added
+    assert all(getattr(r, "path", None) != "/api/orphan2" for r in server.app.routes)
+
+
+def test_route_registration_failure_rolls_back_handler(monkeypatch):
+    server = Server.get_instance()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("route table exploded")
+
+    monkeypatch.setattr(server.app, "add_api_route", boom)
+
+    with pytest.raises(RuntimeError, match="route table exploded"):
+        class Orphan3Endpoint(Endpoint):
+            mcp_definition = {"name": "orphan3_tool", "description": "orphan", "parameters": {"properties": {}}}
+            url = "/api/orphan3"
+            method = "POST"
+            def callback(self):
+                return {}
+
+    # rollback: the handler appended before the route failure must be removed
+    assert server.url_handlers == []
