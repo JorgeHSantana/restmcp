@@ -49,6 +49,7 @@ coverage.xml
 
 # internal dev docs
 docs/superpowers/
+.superpowers
 
 # Claude Code
 .claude/
