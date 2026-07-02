@@ -443,7 +443,7 @@ Error:
 { "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
 ```
 
-The `Endpoint` validates the parameters received in the JSON body against the schema: a key that does not exist in the inferred properties results in a `ValidationError` ("Invalid parameter"). Exceptions derived from `RestMCPException` become responses with the corresponding `status_code`; any other exception becomes HTTP 500 with `error_type` "InternalServerError".
+REST parameters are accepted from the query string and/or the JSON body (body wins on conflicts) and are validated against `mcp_definition` before reaching the callback: an unknown key, a value whose type does not match the declared schema, a missing required parameter (a property with no `default`), or a non-object body all result in a `ValidationError` (HTTP 400). Numeric/boolean strings from the query string are coerced to the declared type. Exceptions derived from `RestMCPException` become responses with the corresponding `status_code`; any other exception becomes HTTP 500 with `error_type` "InternalServerError" and a generic message (the traceback goes to the server log, never the response).
 
 ---
 
@@ -468,7 +468,7 @@ Main methods:
 | Method | Behavior |
 |---|---|
 | `asgi_app(mcp_path, transport, public_paths)` | Returns a single ASGI app serving REST at `/` and MCP at `mcp_path`. Holds the FastMCP lifespan in the parent app (avoids the "Task group is not initialized" error). If `AUTH_API_KEY` is set, it wraps everything in the auth middleware. |
-| `start(host, port, reload)` | Starts only the REST application via uvicorn (no MCP). |
+| `start(host, port, reload)` | Starts only the REST application via uvicorn (no MCP). `reload=True` raises `ValueError` — uvicorn needs an import string for reload; run `uvicorn main:app --reload` instead. |
 | `get_mcp()` | Returns the raw FastMCP instance (escape hatch for advanced use). Memoized. |
 | `get_instance()` | Returns the Server singleton. |
 
