@@ -443,7 +443,7 @@ Error:
 { "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
 ```
 
-REST parameters are accepted from the query string and/or the JSON body (body wins on conflicts) and are validated against `mcp_definition` before reaching the callback: an unknown key, a value whose type does not match the declared schema, a missing required parameter (a property with no `default`), or a non-object body all result in a `ValidationError` (HTTP 400). Numeric/boolean strings from the query string are coerced to the declared type. Exceptions derived from `RestMCPException` become responses with the corresponding `status_code`; any other exception becomes HTTP 500 with `error_type` "InternalServerError" and a generic message (the traceback goes to the server log, never the response).
+REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5` — with one deliberate guard: a boolean is rejected where a number is expected. An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
 ---
 
