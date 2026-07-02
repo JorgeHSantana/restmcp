@@ -420,3 +420,67 @@ def test_missing_required_param_returns_400():
     body = response.json()
     assert body["error_type"] == "ValidationError"
     assert "item_id" in body["error"]
+
+
+# --- REST type validation mirrors the MCP (pydantic) path ---
+
+def _make_typed_endpoint():
+    class TypedEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "typed_tool",
+            "description": "typed params",
+            "parameters": {"properties": {
+                "n": {"type": "integer"},
+                "flag": {"type": "boolean", "default": False},
+            }},
+        }
+        url = "/api/typed"
+        method = "POST"
+
+        def callback(self, n: int, flag: bool = False):
+            return {"n": n, "flag": flag}
+
+
+def test_wrong_type_returns_400():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": "abc"})
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ValidationError"
+
+
+def test_correct_types_pass_through():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": 5, "flag": True})
+    assert response.status_code == 200
+    assert response.json()["result"] == {"n": 5, "flag": True}
+
+
+def test_numeric_string_is_coerced():
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/typed", json={"n": "5"})
+    assert response.status_code == 200
+    assert response.json()["result"]["n"] == 5
+
+
+def test_explicit_null_allowed_when_default_is_none():
+    class NullableEndpoint(Endpoint):
+        mcp_definition = {
+            "name": "nullable_tool",
+            "description": "nullable param",
+            "parameters": {"properties": {
+                "ids": {"type": "array", "items": {"type": "integer"}, "default": None},
+            }},
+        }
+        url = "/api/nullable"
+        method = "POST"
+
+        def callback(self, ids: list | None = None):
+            return {"ids": ids}
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/nullable", json={"ids": None})
+    assert response.status_code == 200
+    assert response.json()["result"]["ids"] is None

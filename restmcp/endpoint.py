@@ -25,6 +25,53 @@ async def run_callback(callback: object, /, **kwargs):
     return await loop.run_in_executor(None, lambda: callback(**kwargs))
 
 
+def _coerce_param(name: str, value: object, schema: dict):
+    """Validate/coerce one REST parameter against its mcp_definition schema.
+
+    JSON body values arrive typed; query-string values (Task: GET support)
+    arrive as str and are coerced to the declared type. Mirrors the MCP path,
+    where pydantic enforces the same schema. Raises ValidationError (400) on
+    mismatch. An explicit null is accepted when the schema declares a default
+    (i.e. the parameter is optional).
+    """
+    expected = schema.get("type", "string")
+    if value is None and "default" in schema:
+        return None
+    if expected == "string":
+        if isinstance(value, str):
+            return value
+    elif expected == "integer":
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                pass
+    elif expected == "number":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                pass
+    elif expected == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false", "1", "0"):
+            return value.lower() in ("true", "1")
+    elif expected == "array":
+        if isinstance(value, list):
+            return value
+    elif expected == "object":
+        if isinstance(value, dict):
+            return value
+    raise ValidationError(
+        f"Invalid value for parameter '{name}': expected {expected}"
+    )
+
+
 def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
     if not isinstance(mcp_def, dict):
         raise TypeError(
@@ -119,7 +166,7 @@ class Endpoint(ABC):
             for key, value in data.items():
                 if key not in valid_params:
                     raise ValidationError(f"Invalid parameter: {key}")
-                parameters[key] = value
+                parameters[key] = _coerce_param(key, value, valid_params[key])
 
             # A property without a "default" key is required (same convention
             # the MCP path uses when building the pydantic signature).
