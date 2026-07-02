@@ -250,3 +250,75 @@ def test_build_arg_model_array_item_coercion_and_guard():
     with pytest.raises(ValidationError):
         M(n=1, ids=[1, True])                     # anti-bool on items
     assert M(n=1, ids=None).ids is None           # explicit null ok (default None)
+
+
+# --- field_spec_for / registration-time hardening ---
+
+def test_field_spec_for_required_and_optional():
+    from restmcp.schema import field_spec_for, python_type_for
+    ann, default = field_spec_for("n", {"type": "integer"})
+    assert default is ...
+    ann_opt, default_opt = field_spec_for("ids", {"type": "array", "default": None})
+    assert default_opt is None
+    assert type(None) in ann_opt.__args__          # Optional-wrapped
+
+
+def test_field_spec_for_coerces_default_at_registration():
+    from restmcp.schema import field_spec_for
+    _, default = field_spec_for("n", {"type": "integer", "default": "10"})
+    assert default == 10 and isinstance(default, int)
+
+
+def test_field_spec_for_rejects_bad_default():
+    import pytest
+    from restmcp.schema import field_spec_for
+    with pytest.raises(TypeError, match="default"):
+        field_spec_for("n", {"type": "integer", "default": "abc"})
+    with pytest.raises(TypeError, match="default"):
+        field_spec_for("n", {"type": "integer", "default": True})   # anti-bool
+
+
+def test_check_property_name():
+    import pytest
+    from restmcp.schema import check_property_name
+    check_property_name("t", "device_id")                # ok, no raise
+    for bad in ("_id", "model_dump", "model_config", "not valid", "class-y"):
+        with pytest.raises(TypeError, match="parameter name"):
+            check_property_name("t", bad)
+
+
+def test_build_arg_model_tolerates_none_parameters():
+    from restmcp.schema import build_arg_model
+    M = build_arg_model({"name": "t", "description": "x", "parameters": None})
+    assert M.model_fields == {}
+    M2 = build_arg_model(
+        {"name": "t2", "description": "x", "parameters": {"properties": None}}
+    )
+    assert M2.model_fields == {}
+
+
+def test_build_arg_model_rejects_underscore_and_reserved_names():
+    import pytest
+    from restmcp.schema import build_arg_model
+
+    def _def(pname):
+        return {"name": "t", "description": "x",
+                "parameters": {"properties": {pname: {"type": "integer"}}}}
+
+    with pytest.raises(TypeError, match="_id"):
+        build_arg_model(_def("_id"))
+    with pytest.raises(TypeError, match="model_dump"):
+        build_arg_model(_def("model_dump"))
+    with pytest.raises(TypeError, match="model_config"):
+        build_arg_model(_def("model_config"))
+
+
+def test_build_arg_model_default_coerced_matches_sent_value():
+    # Same logical value must reach the callback with the same type whether
+    # the client sent it or omitted it (review finding 5).
+    from restmcp.schema import build_arg_model
+    M = build_arg_model({"name": "t", "description": "x",
+                         "parameters": {"properties":
+                             {"n": {"type": "integer", "default": "10"}}}})
+    assert M().n == 10
+    assert M(n="10").n == 10

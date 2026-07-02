@@ -4,7 +4,14 @@ import types
 import typing
 from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, create_model
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    TypeAdapter,
+    ValidationError as PydanticValidationError,
+    create_model,
+)
 
 _PRIMITIVES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -52,32 +59,84 @@ def python_type_for(prop: dict):
     return str
 
 
+_NAME_RULES = (
+    "must be a valid Python identifier and must not start with '_' or "
+    "'model_' (pydantic reserves those)"
+)
+
+
+def check_property_name(context: str, name: str) -> None:
+    """Reject parameter names pydantic would drop or refuse.
+
+    create_model silently discards leading-underscore names (treated as
+    private attributes) and raises for 'model_'-prefixed ones (protected
+    namespace); both must fail loudly at registration instead.
+    """
+    if (
+        not isinstance(name, str)
+        or not name.isidentifier()
+        or name.startswith("_")
+        or name.startswith("model_")
+    ):
+        raise TypeError(
+            f"{context}: invalid parameter name {name!r} — parameter names {_NAME_RULES}."
+        )
+
+
+def field_spec_for(name: str, prop: dict) -> tuple[Any, Any]:
+    """(annotation, default) for one mcp_definition property.
+
+    Single source of truth for the optionality convention, shared by
+    build_arg_model (REST) and the MCP signature builder (mcp.py):
+    - no "default" key    -> required (returned default is Ellipsis)
+    - "default": None     -> Optional[annotation], default None (explicit
+      null accepted)
+    - "default": <value>  -> validated and coerced through the property's own
+      annotation at registration time, so the callback sees the same type
+      whether the client sent the value or omitted it.
+    """
+    annotation = python_type_for(prop)
+    if "default" not in prop:
+        return annotation, ...
+    default = prop["default"]
+    if default is None:
+        return Optional[annotation], None
+    try:
+        return annotation, TypeAdapter(annotation).validate_python(default)
+    except PydanticValidationError as e:
+        raise TypeError(
+            f"property {name!r}: default {default!r} does not match its declared type"
+        ) from e
+
+
 def build_arg_model(mcp_definition: dict) -> type[BaseModel]:
     """Build a pydantic model for an endpoint's parameters from its mcp_definition.
 
-    One field per property. A property without a "default" is required; one with
-    a default uses it (wrapped Optional[...] when the default is None, so an
-    explicit null is accepted). extra='forbid' makes an unknown key raise — the
-    caller pre-filters the query string to known keys, so this enforces
-    body-strict validation. This is the REST counterpart to the pydantic model
-    fastmcp builds from the signature; both derive from python_type_for.
+    One field per property, via field_spec_for (shared with the MCP signature
+    builder in mcp.py, so REST and MCP cannot diverge). extra='forbid' makes an
+    unknown key raise — the caller pre-filters the query string to known keys,
+    so this enforces body-strict validation. Definition errors (bad names, bad
+    defaults) raise TypeError here, at registration, never per-request.
     """
-    props = mcp_definition.get("parameters", {}).get("properties", {})
+    tool = mcp_definition.get("name") or "endpoint"
+    props = (mcp_definition.get("parameters") or {}).get("properties") or {}
     fields = {}
     for name, prop in props.items():
-        annotation = python_type_for(prop)
-        if "default" in prop:
-            default = prop["default"]
-            if default is None:
-                annotation = Optional[annotation]
-            fields[name] = (annotation, default)
-        else:
-            fields[name] = (annotation, ...)
-    return create_model(
-        f"{mcp_definition['name']}_Args",
+        check_property_name(tool, name)
+        fields[name] = field_spec_for(name, prop)
+    model = create_model(
+        f"{tool}_Args",
         __config__=ConfigDict(extra="forbid"),
         **fields,
     )
+    # Belt and braces: if a future pydantic version silently drops a field for
+    # any other reason, fail at registration, not as per-request 400/500s.
+    dropped = set(props) - set(model.model_fields)
+    if dropped:
+        raise TypeError(
+            f"{tool}: pydantic dropped parameter(s) {sorted(dropped)} — names {_NAME_RULES}."
+        )
+    return model
 
 
 def tool_name_from_class(cls) -> str:
