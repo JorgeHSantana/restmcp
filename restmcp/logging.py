@@ -11,6 +11,9 @@ class Logger:
 
         self._logger = logging.getLogger(name)
         self._logger.setLevel(level)
+        # This handler is the single output; without this, an app that also
+        # configures the root logger would print every message twice.
+        self._logger.propagate = False
 
         if not self._logger.handlers:
             handler = logging.StreamHandler()
