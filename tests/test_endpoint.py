@@ -527,3 +527,20 @@ def test_unknown_query_param_returns_400():
     response = client.get("/api/query2?nope=1")
     assert response.status_code == 400
     assert response.json()["error_type"] == "ValidationError"
+
+
+def test_internal_error_does_not_leak_details():
+    class LeakEndpoint(Endpoint):
+        mcp_definition = {"name": "leak_tool", "description": "leak", "parameters": {"properties": {}}}
+        url = "/api/leak"
+        method = "POST"
+
+        def callback(self):
+            raise RuntimeError("secret internal detail")
+
+    client = TestClient(Server.get_instance().app)
+    response = client.post("/api/leak", json={})
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"] == "Internal server error"
+    assert "secret internal detail" not in str(body)

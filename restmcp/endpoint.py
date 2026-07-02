@@ -7,6 +7,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from restmcp.exceptions import RestMCPException, ValidationError
+from restmcp.logging import Logger
+
+_logger = Logger("restmcp.endpoint")
 
 
 async def run_callback(callback: object, /, **kwargs):
@@ -204,9 +207,14 @@ class Endpoint(ABC):
                 "error_type": e.__class__.__name__,
             }), status_code=e.status_code)
 
-        except Exception as e:
+        except Exception:
+            # Full traceback goes to the server log; the client gets a
+            # generic message so internals never leak into responses.
+            _logger.error(
+                "Unhandled error in tool %r", self.mcp_definition["name"], exc_info=True
+            )
             return JSONResponse(jsonable_encoder({
-                "error": str(e),
+                "error": "Internal server error",
                 "tool": self.mcp_definition["name"],
                 "success": False,
                 "error_type": "InternalServerError",
