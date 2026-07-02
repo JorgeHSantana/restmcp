@@ -64,7 +64,7 @@ class RestApp:
         def health_check():
             return {
                 "status": "healthy",
-                "timestamp": dt.datetime.utcnow().isoformat(),
+                "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
 
     def register_handler(self, handler: Any):
