@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, List, Optional
 
 
 class McpApp:
@@ -9,7 +9,7 @@ class McpApp:
     # (e.g. McpBackend with build()/http_app()/lifespan) and make FastMCP one
     # implementation, so a FastMCP major bump can't break callers. See the
     # tracking issue for the full plan and trade-offs.
-    def build(self, url_handlers: list):
+    def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
         mcp = FastMCP("restmcp")
@@ -17,10 +17,10 @@ class McpApp:
             self._register_tool(mcp, handler)
         return mcp
 
-    def _register_tool(self, mcp, handler):
+    def _register_tool(self, mcp: Any, handler: Any):
         mcp.add_tool(self._build_tool_function(handler))
 
-    def _build_tool_function(self, handler):
+    def _build_tool_function(self, handler: Any):
         import inspect
         from typing import Annotated
 

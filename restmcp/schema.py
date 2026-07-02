@@ -4,7 +4,7 @@ import types
 import typing
 from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BeforeValidator, ConfigDict, create_model
+from pydantic import BaseModel, BeforeValidator, ConfigDict, create_model
 
 _PRIMITIVES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -52,7 +52,7 @@ def python_type_for(prop: dict):
     return str
 
 
-def build_arg_model(mcp_definition: dict):
+def build_arg_model(mcp_definition: dict) -> type[BaseModel]:
     """Build a pydantic model for an endpoint's parameters from its mcp_definition.
 
     One field per property. A property without a "default" is required; one with
