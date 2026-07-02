@@ -4,7 +4,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
-from restmcp.mcp import McpApp, _JSON_TO_PYTHON
+from restmcp.mcp import McpApp
 
 
 # --- helpers ---
@@ -48,24 +48,6 @@ def _base_type(annotation):
     if hasattr(annotation, "__metadata__"):
         return annotation.__origin__
     return annotation
-
-
-# --- type mapping dict ---
-
-def test_json_type_map_string():
-    assert _JSON_TO_PYTHON["string"] is str
-
-def test_json_type_map_integer():
-    assert _JSON_TO_PYTHON["integer"] is int
-
-def test_json_type_map_number():
-    assert _JSON_TO_PYTHON["number"] is float
-
-def test_json_type_map_boolean():
-    assert _JSON_TO_PYTHON["boolean"] is bool
-
-def test_json_type_map_object():
-    assert _JSON_TO_PYTHON["object"] is dict
 
 
 # --- build() ---
@@ -171,10 +153,16 @@ def test_array_of_strings_field():
 
 
 def test_array_of_integers_field():
+    # Item type comes from python_type_for too, so integer items carry the
+    # anti-bool guard (List[Annotated[int, BeforeValidator(...)]]), not bare List[int].
+    from restmcp.schema import python_type_for
+
     p = _params(_func(_make_handler(
         properties={"ids": {"type": "array", "items": {"type": "integer"}}}
     )))
-    assert _base_type(p["ids"].annotation) == List[int]
+    assert _base_type(p["ids"].annotation) == python_type_for(
+        {"type": "array", "items": {"type": "integer"}}
+    )
 
 
 def test_unknown_type_falls_back_to_str():
@@ -198,3 +186,25 @@ def test_description_carried_via_annotated():
     assert hasattr(annotation, "__metadata__")
     field_info = annotation.__metadata__[0]
     assert field_info.description == "the x value"
+
+
+def test_mcp_tool_annotation_uses_shared_mapping():
+    # The MCP tool's integer param must carry the anti-bool guard, i.e. the
+    # annotation is the same one python_type_for produces.
+    from typing import get_args
+    from restmcp.mcp import McpApp
+    from restmcp.schema import python_type_for
+
+    class _Handler:
+        mcp_definition = {
+            "name": "shared_map_tool",
+            "description": "x",
+            "parameters": {"properties": {"n": {"type": "integer"}}},
+        }
+        def callback(self, n): return {"n": n}
+
+    fn = McpApp()._build_tool_function(_Handler())
+    ann = fn.__annotations__["n"]
+    # base type is int and it carries the same BeforeValidator metadata
+    assert get_args(ann)[0] is int
+    assert get_args(ann)[1:] == get_args(python_type_for({"type": "integer"}))[1:]

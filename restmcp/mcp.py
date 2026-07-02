@@ -1,13 +1,4 @@
-from typing import Any, Dict, List, Optional
-
-
-_JSON_TO_PYTHON = {
-    "string": str,
-    "integer": int,
-    "number": float,
-    "boolean": bool,
-    "object": dict,
-}
+from typing import Optional
 
 
 class McpApp:
@@ -18,7 +9,7 @@ class McpApp:
     # (e.g. McpBackend with build()/http_app()/lifespan) and make FastMCP one
     # implementation, so a FastMCP major bump can't break callers. See the
     # tracking issue for the full plan and trade-offs.
-    def build(self, url_handlers: List[Any]):
+    def build(self, url_handlers: list):
         from fastmcp import FastMCP
 
         mcp = FastMCP("restmcp")
@@ -26,16 +17,17 @@ class McpApp:
             self._register_tool(mcp, handler)
         return mcp
 
-    def _register_tool(self, mcp: Any, handler: Any):
+    def _register_tool(self, mcp, handler):
         mcp.add_tool(self._build_tool_function(handler))
 
-    def _build_tool_function(self, handler: Any):
+    def _build_tool_function(self, handler):
         import inspect
         from typing import Annotated
 
         from pydantic import Field
 
         from restmcp.endpoint import run_callback
+        from restmcp.schema import python_type_for
 
         def_dict = handler.mcp_definition
         name = def_dict["name"]
@@ -45,14 +37,7 @@ class McpApp:
         parameters = []
         annotations = {}
         for prop_name, prop_data in properties.items():
-            ptype = prop_data.get("type")
-            if ptype == "array":
-                item_ptype = prop_data.get("items", {}).get("type", "string")
-                py_type = List[_JSON_TO_PYTHON.get(item_ptype, str)]
-            elif ptype == "object":
-                py_type = Dict[str, Any]
-            else:
-                py_type = _JSON_TO_PYTHON.get(ptype, str)
+            py_type = python_type_for(prop_data)
 
             has_default = "default" in prop_data
             default_val = prop_data.get("default")
