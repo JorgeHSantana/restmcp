@@ -710,3 +710,42 @@ def test_bad_default_fails_at_class_definition_with_context():
             url = "/api/bad-default1"
             method = "POST"
             def callback(self, n=0): return {"n": n}
+
+
+# --- callback signature must accept every declared property (finding 2) ---
+
+def test_callback_missing_declared_param_fails_at_registration():
+    with pytest.raises(ValueError, match="verbose"):
+        class SigMismatch1Endpoint(Endpoint):
+            mcp_definition = {
+                "name": "sig_mismatch1_tool",
+                "description": "x",
+                "parameters": {"properties": {
+                    "n": {"type": "integer"},
+                    "verbose": {"type": "boolean", "default": False},
+                }},
+            }
+            url = "/api/sig-mismatch1"
+            method = "POST"
+            def callback(self, n): return {"n": n}
+
+
+def test_callback_with_var_kwargs_accepts_any_declared_param():
+    class SigKwargs1Endpoint(Endpoint):
+        mcp_definition = {
+            "name": "sig_kwargs1_tool",
+            "description": "x",
+            "parameters": {"properties": {
+                "n": {"type": "integer"},
+                "verbose": {"type": "boolean", "default": False},
+            }},
+        }
+        url = "/api/sig-kwargs1"
+        method = "POST"
+        def callback(self, **kwargs): return kwargs
+
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/sig-kwargs1", json={"n": 1})
+    assert r.status_code == 200
+    # Defaults are injected on purpose — same behavior as the MCP transport.
+    assert r.json()["result"] == {"n": 1, "verbose": False}

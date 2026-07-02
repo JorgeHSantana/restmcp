@@ -141,7 +141,9 @@ class Endpoint(ABC):
                     parts.append(f"{loc}: {err['msg']}")
                 raise ValidationError("; ".join(parts))
 
-            result = await run_callback(self.callback, **model.model_dump())
+            # dict(model): the already-validated values, without model_dump()'s
+            # per-request recursive copy of every container.
+            result = await run_callback(self.callback, **dict(model))
 
             return JSONResponse(jsonable_encoder({
                 "tool": self.mcp_definition["name"],
@@ -203,6 +205,31 @@ class Endpoint(ABC):
             self._arg_model = build_arg_model(self.mcp_definition)
         except Exception as e:
             raise ValueError(f"{cls.__name__}: invalid mcp_definition — {e}") from e
+
+        # Every declared property reaches the callback (defaults included,
+        # matching the MCP transport), so the signature must accept them all —
+        # checked here so the mismatch is a registration error, not a
+        # per-request 500 (review finding 2).
+        sig = inspect.signature(self.callback)
+        if not any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            accepted = {
+                p.name
+                for p in sig.parameters.values()
+                if p.kind in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
+            rejected = sorted(set(self._arg_model.model_fields) - accepted)
+            if rejected:
+                raise ValueError(
+                    f"{cls.__name__}: callback does not accept declared "
+                    f"parameter(s) {', '.join(rejected)} — every mcp_definition "
+                    f"property is passed to the callback (defaults included); "
+                    f"add the parameter(s) or **kwargs."
+                )
 
         endpoint_self = self
 
