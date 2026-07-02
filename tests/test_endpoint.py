@@ -749,3 +749,25 @@ def test_callback_with_var_kwargs_accepts_any_declared_param():
     assert r.status_code == 200
     # Defaults are injected on purpose — same behavior as the MCP transport.
     assert r.json()["result"] == {"n": 1, "verbose": False}
+
+
+# --- pinned parity semantics (findings 6 and 9): intentional behavior ---
+
+def test_explicit_null_rejected_when_default_is_not_none():
+    # default False (non-None) => explicit null is 400. Matches MCP, which
+    # already rejected this on 0.1.x; pinned here as intended.
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    r = client.post("/api/typed", json={"n": 1, "flag": None})
+    assert r.status_code == 400
+    assert r.json()["error_type"] == "ValidationError"
+
+
+def test_lax_boolean_inputs_accepted():
+    # pydantic-lax bool inputs (1/0, "on"/"off", "yes"/"no") are accepted on
+    # both transports; pinned here as intended (finding 9).
+    _make_typed_endpoint()
+    client = TestClient(Server.get_instance().app)
+    assert client.post("/api/typed", json={"n": 1, "flag": 1}).json()["result"]["flag"] is True
+    assert client.post("/api/typed", json={"n": 1, "flag": "on"}).json()["result"]["flag"] is True
+    assert client.post("/api/typed", json={"n": 1, "flag": "no"}).json()["result"]["flag"] is False
