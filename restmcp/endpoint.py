@@ -107,6 +107,7 @@ class Endpoint(ABC):
     validated against mcp_definition before reaching the callback."""
 
     disabled: bool = False
+    _registered: bool = False  # per-subclass; set after successful registration
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -224,6 +225,13 @@ class Endpoint(ABC):
         from restmcp.server import Server
         from restmcp.rest import _auth_dependency
 
+        cls = type(self)
+        # Idempotency guard (issue #10): a second instantiation (manual call,
+        # module reload) must not re-register the route. Checked via vars() so
+        # a subclass never inherits its parent's "already registered" state.
+        if vars(cls).get("_registered", False):
+            return
+
         self.mcp_definition = getattr(self, "mcp_definition", None)
         if not self.mcp_definition:
             raise ValueError(f"{self.__class__.__name__}: mcp_definition is required")
@@ -245,10 +253,18 @@ class Endpoint(ABC):
             return await endpoint_self._callback(request)
 
         server = Server.get_instance()
-        server.app.add_api_route(
-            self.url,
-            route_handler,
-            methods=[self.method],
-            dependencies=[Depends(_auth_dependency)],
-        )
+        # Atomic registration (issue #10): in-memory append first (cheap,
+        # can't half-fail), ASGI route last, rollback on failure — never a
+        # route without a handler or a handler without a route.
         server.register_url_handler(self)
+        try:
+            server.app.add_api_route(
+                self.url,
+                route_handler,
+                methods=[self.method],
+                dependencies=[Depends(_auth_dependency)],
+            )
+        except Exception:
+            server.unregister_url_handler(self)
+            raise
+        cls._registered = True

@@ -544,3 +544,65 @@ def test_internal_error_does_not_leak_details():
     body = response.json()
     assert body["error"] == "Internal server error"
     assert "secret internal detail" not in str(body)
+
+
+# --- registration is idempotent and atomic (issue #10) ---
+
+def test_double_instantiation_does_not_duplicate_route():
+    class DupEndpoint(Endpoint):
+        mcp_definition = {"name": "dup_tool", "description": "dup", "parameters": {"properties": {}}}
+        url = "/api/dup"
+        method = "POST"
+        def callback(self):
+            return {}
+
+    server = Server.get_instance()
+
+    def route_count():
+        return len([r for r in server.app.routes if getattr(r, "path", None) == "/api/dup"])
+
+    assert route_count() == 1
+    assert len(server.url_handlers) == 1
+    DupEndpoint()  # manual second instantiation must be a no-op
+    assert route_count() == 1
+    assert len(server.url_handlers) == 1
+
+
+def test_handler_registration_failure_leaves_no_orphan_route(monkeypatch):
+    server = Server.get_instance()
+
+    def boom(handler):
+        raise RuntimeError("handler list exploded")
+
+    monkeypatch.setattr(server, "register_url_handler", boom)
+
+    with pytest.raises(RuntimeError, match="handler list exploded"):
+        class Orphan2Endpoint(Endpoint):
+            mcp_definition = {"name": "orphan2_tool", "description": "orphan", "parameters": {"properties": {}}}
+            url = "/api/orphan2"
+            method = "POST"
+            def callback(self):
+                return {}
+
+    # with append-first ordering, the ASGI route must never have been added
+    assert all(getattr(r, "path", None) != "/api/orphan2" for r in server.app.routes)
+
+
+def test_route_registration_failure_rolls_back_handler(monkeypatch):
+    server = Server.get_instance()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("route table exploded")
+
+    monkeypatch.setattr(server.app, "add_api_route", boom)
+
+    with pytest.raises(RuntimeError, match="route table exploded"):
+        class Orphan3Endpoint(Endpoint):
+            mcp_definition = {"name": "orphan3_tool", "description": "orphan", "parameters": {"properties": {}}}
+            url = "/api/orphan3"
+            method = "POST"
+            def callback(self):
+                return {}
+
+    # rollback: the handler appended before the route failure must be removed
+    assert server.url_handlers == []

@@ -34,6 +34,9 @@ class Server:
     def register_url_handler(self, handler: Any):
         self._rest.register_handler(handler)
 
+    def unregister_url_handler(self, handler: Any):
+        self._rest.unregister_handler(handler)
+
     def start(self, host: str = "0.0.0.0", port: int = 5000, reload: bool = False):
         if reload:
             raise ValueError(
