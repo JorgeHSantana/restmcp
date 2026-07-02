@@ -1,8 +1,9 @@
 """Helpers shared by endpoints.
 
-Important framework detail: a parameter declared as
-`{"type": "string", "format": "date-time"}` arrives in the callback as a
-**string**, not a `datetime`. Coerce it explicitly.
+Important framework detail: restmcp maps every string parameter to `str` and
+never parses dates — there is no `date-time` format handling. An ISO 8601
+timestamp therefore arrives in the callback as a plain string; coerce it
+explicitly.
 """
 
 import datetime as dt

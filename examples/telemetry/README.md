@@ -16,7 +16,7 @@ fleet in memory, so `python main.py` just works.
 | `Service` orchestration | [services/battery.py](services/battery.py) |
 | `cached_method(ttl=...)` (works with list args) | [services/battery.py](services/battery.py) |
 | `Endpoint` auto-registration | [endpoints/](endpoints/) |
-| Array params + `date-time` param coercion | [endpoints/check_battery.py](endpoints/check_battery.py) |
+| Array params + manual ISO date coercion in the callback | [endpoints/check_battery.py](endpoints/check_battery.py) |
 | Automatic `datetime` → ISO 8601 serialization | [endpoints/get_device.py](endpoints/get_device.py) |
 | `NotFoundError` / `ValidationError` → HTTP 404/400 | [endpoints/get_device.py](endpoints/get_device.py) |
 | One ASGI app for REST **and** MCP via `asgi_app()` | [main.py](main.py) |
@@ -74,7 +74,7 @@ from fastmcp import Client
 async def main():
     async with Client("http://localhost:8000/mcp-protocol/") as c:
         print([t.name for t in await c.list_tools()])
-        res = await c.call_tool("check_battery", {"args": {"device_id_list": [1, 3]}})
+        res = await c.call_tool("check_battery", {"device_id_list": [1, 3]})
         print(res.data)
 
 asyncio.run(main())
