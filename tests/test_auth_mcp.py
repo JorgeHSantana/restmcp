@@ -63,3 +63,32 @@ def test_rest_without_token_blocked_when_auth_enabled(monkeypatch):
         r = c.post("/mcp/tools/ping", json={},
                    headers={"Authorization": "Bearer sk_test"})
         assert r.status_code == 200                                          # with token OK
+
+
+# --- non-ASCII tokens must be rejected, not crash (hmac.compare_digest on str
+# raises TypeError for non-ASCII; we compare UTF-8 bytes instead) ---
+
+def test_valid_token_non_ascii_returns_false(monkeypatch):
+    monkeypatch.setenv("AUTH_API_KEY", "secret123")
+    from restmcp.auth import _valid_token
+    assert _valid_token("café") is False
+
+
+def test_auth_dependency_non_ascii_token_is_401(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from restmcp.rest import _auth_dependency
+
+    monkeypatch.setenv("AUTH_API_KEY", "secret123")
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "query_string": b"",
+        # latin-1 header value: reaches the dependency as a non-ASCII str
+        "headers": [(b"authorization", "Bearer caf\xe9".encode("latin-1"))],
+    }
+    with pytest.raises(HTTPException) as exc:
+        _auth_dependency(Request(scope))
+    assert exc.value.status_code == 401

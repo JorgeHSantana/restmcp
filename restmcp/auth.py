@@ -5,7 +5,12 @@ from starlette.responses import JSONResponse
 
 def _valid_token(raw: str) -> bool:
     keys = [k.strip() for k in os.getenv("AUTH_API_KEY", "").split(",") if k.strip()]
-    return bool(raw) and any(hmac.compare_digest(raw, k) for k in keys)
+    if not raw:
+        return False
+    # Compare UTF-8 bytes: compare_digest on str raises TypeError for
+    # non-ASCII input, which would turn a bad token into a 500.
+    raw_bytes = raw.encode("utf-8")
+    return any(hmac.compare_digest(raw_bytes, k.encode("utf-8")) for k in keys)
 
 
 class AuthMiddleware:
