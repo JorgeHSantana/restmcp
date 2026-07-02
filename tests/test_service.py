@@ -95,3 +95,30 @@ def test_service_execute_uses_injected_repository():
     mock = MockRepository()
     result = BatteryService(repo=mock).execute(client_id="123")
     assert result == {"mock": True}
+
+
+def test_service_unknown_override_raises():
+    import pytest
+
+    from restmcp.datasource import DataSource
+    from restmcp.repository import Repository
+    from restmcp.service import Service
+
+    class FakeOverrideDataSource(DataSource):
+        pass
+
+    class OverrideThingRepository(Repository):
+        data_source = FakeOverrideDataSource()
+
+        def get(self, **kwargs):
+            return []
+
+    class OverrideThingService(Service):
+        things = OverrideThingRepository()
+
+    # correct name works
+    OverrideThingService(things=OverrideThingRepository())
+
+    # typo must fail loudly, not silently fall back to the default
+    with pytest.raises(TypeError, match="unknown override"):
+        OverrideThingService(thngs=OverrideThingRepository())
