@@ -31,6 +31,18 @@ class Server:
     def url_handlers(self):
         return self._rest.url_handlers
 
+    @property
+    def mcp_handlers(self):
+        """Handlers served over MCP — excludes ``expose = "rest"`` endpoints.
+
+        Single filter shared by get_mcp() and the /mcp/tools catalog, so what
+        the catalog advertises and what the MCP server registers can't diverge.
+        """
+        return [
+            h for h in self._rest.url_handlers
+            if getattr(h, "expose", "both") != "rest"
+        ]
+
     def register_url_handler(self, handler: Any):
         self._rest.register_handler(handler)
 
@@ -60,7 +72,7 @@ class Server:
         `.lifespan`. See issue (full MCP decoupling).
         """
         if self._mcp_instance is None:
-            self._mcp_instance = self._mcp.build(self.url_handlers)
+            self._mcp_instance = self._mcp.build(self.mcp_handlers)
         return self._mcp_instance
 
     def asgi_app(

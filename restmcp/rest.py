@@ -54,7 +54,10 @@ class RestApp:
                         "parameters": h.mcp_definition["parameters"],
                         "returns": h.mcp_definition.get("returns", {}),
                     }
+                    # the catalog advertises the MCP surface: "rest"-only
+                    # endpoints are not tools (same filter as Server.mcp_handlers)
                     for h in self.url_handlers
+                    if getattr(h, "expose", "both") != "rest"
                 ],
                 "server": "restmcp",
                 "version": _package_version(),
