@@ -66,6 +66,12 @@ class Endpoint(ABC):
     validated against mcp_definition before reaching the callback."""
 
     disabled: bool = False
+    # Which transports serve this endpoint. "rest" keeps the tool out of the MCP
+    # server AND the /mcp/tools catalog (e.g. write endpoints an agent must not
+    # even see); "mcp" registers no HTTP route (agent-only tools). Default
+    # "both" — existing endpoints are untouched.
+    expose: str = "both"
+    _EXPOSE_VALUES = ("rest", "mcp", "both")
     _registered: bool = False  # per-subclass; set after successful registration
 
     def __init_subclass__(cls, **kwargs):
@@ -74,6 +80,12 @@ class Endpoint(ABC):
             raise TypeError(
                 f"Endpoint subclasses must end with 'Endpoint' "
                 f"(got: '{cls.__name__}'). Rename to '{cls.__name__}Endpoint'."
+            )
+        expose = vars(cls).get("expose", cls.expose)
+        if expose not in cls._EXPOSE_VALUES:
+            raise TypeError(
+                f"{cls.__name__}: expose must be one of {list(cls._EXPOSE_VALUES)} "
+                f"(got: {expose!r})."
             )
 
         if getattr(cls, "disabled", False):
@@ -239,16 +251,62 @@ class Endpoint(ABC):
         server = Server.get_instance()
         # Atomic registration (issue #10): in-memory append first (cheap,
         # can't half-fail), ASGI route last, rollback on failure — never a
-        # route without a handler or a handler without a route.
+        # route without a handler or a handler without a route. An "mcp"-only
+        # endpoint registers the handler and skips the HTTP route entirely.
         server.register_url_handler(self)
-        try:
-            server.app.add_api_route(
-                self.url,
-                route_handler,
-                methods=[self.method],
-                dependencies=[Depends(_auth_dependency)],
-            )
-        except Exception:
-            server.unregister_url_handler(self)
-            raise
+        if self.expose != "mcp":
+            try:
+                server.app.add_api_route(
+                    self.url,
+                    route_handler,
+                    methods=[self.method],
+                    dependencies=[Depends(_auth_dependency)],
+                    operation_id=self.mcp_definition["name"],
+                    description=self.mcp_definition.get("description"),
+                    openapi_extra=_openapi_params(self.mcp_definition, self.method),
+                )
+            except Exception:
+                server.unregister_url_handler(self)
+                raise
         cls._registered = True
+
+
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+def _openapi_params(mcp_definition: dict, method: str) -> dict | None:
+    """OpenAPI request metadata for a route, from the SAME source MCP publishes.
+
+    The generic ``route_handler(request)`` gives FastAPI nothing to describe, so
+    every operation used to come out empty and generated clients (e.g.
+    openapi-typescript) had no request types at all. This derives
+    ``requestBody``/``parameters`` straight from ``mcp_definition`` — not from
+    the pydantic arg model — so the published schema is byte-for-byte the JSON
+    Schema the author declared (or inference built), with no pydantic dialect
+    quirks, and REST/MCP cannot drift.
+
+    Conventions mirrored from validation: a property without a ``default`` key
+    is required (`schema.field_spec_for`); unknown keys are rejected
+    (extra='forbid'), hence ``additionalProperties: false``. Response schemas
+    are part B of the issue (design pending) and stay out on purpose.
+    """
+    props = (mcp_definition.get("parameters") or {}).get("properties") or {}
+    if not props:
+        return None
+    required = [n for n, p in props.items() if not (isinstance(p, dict) and "default" in p)]
+    if method.upper() in _BODY_METHODS:
+        schema: dict = {
+            "type": "object",
+            "properties": props,
+            "additionalProperties": False,
+        }
+        if required:
+            schema["required"] = required
+        return {"requestBody": {
+            "required": bool(required),
+            "content": {"application/json": {"schema": schema}},
+        }}
+    return {"parameters": [
+        {"name": name, "in": "query", "required": name in required, "schema": prop}
+        for name, prop in props.items()
+    ]}
