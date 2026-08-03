@@ -31,3 +31,6 @@ class ReadingRepository(Repository):
 
     def known_device_ids(self) -> list[int]:
         return self.data_source.known_device_ids()
+
+    def purge_readings(self, device_id: int) -> int:
+        return self.data_source.purge_readings(device_id)

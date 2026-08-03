@@ -20,6 +20,12 @@ from repositories.reading import ReadingRepository
 class BatteryHealthService(Service):
     readings = ReadingRepository()
 
+    def purge_readings(self, device_id: int) -> int:
+        """Discard one device's readings; NotFoundError for unknown devices."""
+        if device_id not in self.readings.known_device_ids():
+            raise NotFoundError(f"Unknown device {device_id}")
+        return self.readings.purge_readings(device_id)
+
     def latest_reading(self, device_id: int):
         """Most recent reading for one device, or NotFoundError if unknown/silent."""
         items = self.readings.get(device_id_list=[device_id])

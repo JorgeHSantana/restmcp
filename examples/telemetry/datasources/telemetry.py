@@ -41,8 +41,23 @@ def _reading_for(device_id: int, day: dt.date) -> dict:
 class TelemetryDataSource(DataSource):
     """Pretends to be a telemetry database. Returns raw dicts, never Entities."""
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._purged: set[int] = set()   # devices whose readings were discarded
+
     def known_device_ids(self) -> list[int]:
         return sorted(_FLEET)
+
+    def purge_readings(self, device_id: int) -> int:
+        """Discard a device's readings; returns how many were dropped."""
+        if device_id in self._purged or device_id not in _FLEET:
+            return 0
+        until = dt.datetime.now()
+        count = len(self.fetch_readings([device_id],
+                                        since=until - dt.timedelta(days=7),
+                                        until=until))
+        self._purged.add(device_id)
+        return count
 
     def fetch_readings(
         self,
@@ -56,8 +71,8 @@ class TelemetryDataSource(DataSource):
         day = since.date()
         while day <= until.date():
             for device_id in ids:
-                if device_id not in _FLEET:
-                    continue  # unknown device -> simply no rows
+                if device_id not in _FLEET or device_id in self._purged:
+                    continue  # unknown or purged device -> simply no rows
                 row = _reading_for(device_id, day)
                 if since <= row["recorded_at"] <= until:
                     rows.append(row)

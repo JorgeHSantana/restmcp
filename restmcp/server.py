@@ -38,10 +38,9 @@ class Server:
         Single filter shared by get_mcp() and the /mcp/tools catalog, so what
         the catalog advertises and what the MCP server registers can't diverge.
         """
-        return [
-            h for h in self._rest.url_handlers
-            if getattr(h, "expose", "both") != "rest"
-        ]
+        from restmcp.rest import serves_mcp
+
+        return [h for h in self._rest.url_handlers if serves_mcp(h)]
 
     def register_url_handler(self, handler: Any):
         self._rest.register_handler(handler)

@@ -19,6 +19,13 @@ def _validate_api_key(raw_key: str) -> bool:
     return _valid_token(raw_key)
 
 
+def serves_mcp(handler) -> bool:
+    """Single source of the expose filter: is this handler part of the MCP
+    surface? Used by both the /mcp/tools catalog and Server.mcp_handlers so
+    the two can never disagree."""
+    return getattr(handler, "expose", "both") != "rest"
+
+
 def _auth_dependency(request: Request):
     if not os.getenv("AUTH_API_KEY"):
         return
@@ -54,10 +61,10 @@ class RestApp:
                         "parameters": h.mcp_definition["parameters"],
                         "returns": h.mcp_definition.get("returns", {}),
                     }
-                    # the catalog advertises the MCP surface: "rest"-only
-                    # endpoints are not tools (same filter as Server.mcp_handlers)
+                    # the catalog advertises the MCP surface (serves_mcp —
+                    # the same predicate Server.mcp_handlers uses)
                     for h in self.url_handlers
-                    if getattr(h, "expose", "both") != "rest"
+                    if serves_mcp(h)
                 ],
                 "server": "restmcp",
                 "version": _package_version(),

@@ -31,7 +31,16 @@ class FakeTelemetryDataSource(DataSource):
             },
         ]
         ids = device_id_list or self.known_device_ids()
-        return [r for r in rows if r["device_id"] in ids]
+        purged = getattr(self, "_purged", set())
+        return [r for r in rows if r["device_id"] in ids and r["device_id"] not in purged]
+
+    def purge_readings(self, device_id):
+        purged = self._purged = getattr(self, "_purged", set())
+        if device_id in purged or device_id not in self.known_device_ids():
+            return 0
+        count = len(self.fetch_readings([device_id], None, dt.datetime.now()))
+        purged.add(device_id)
+        return count
 
 
 def _service():
@@ -63,3 +72,22 @@ def test_fleet_report_is_cached():
     second = svc.fleet_report()
     # Same memoized object within the TTL.
     assert first is second
+
+
+def test_purge_discards_and_reports_count():
+    """purge_readings drains a device once; unknown devices are NotFoundError.
+
+    (The transport-level behavior of the endpoint — expose="rest" hiding the
+    tool from MCP, and the published response schema — is covered by the
+    library's own test suite; here we stay at the service layer, like the
+    rest of this file.)
+    """
+    import pytest
+    from restmcp.exceptions import NotFoundError
+
+    svc = _service()
+    first = svc.purge_readings(10)
+    assert first > 0
+    assert svc.purge_readings(10) == 0          # nothing left to drop
+    with pytest.raises(NotFoundError):
+        svc.purge_readings(99)

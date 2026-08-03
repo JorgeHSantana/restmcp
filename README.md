@@ -232,6 +232,54 @@ the `Returns:` requirement does not apply to hand-written definitions.
 
 Defining the class is enough. The route is registered on the `Server` singleton the moment Python processes the class body.
 
+**Choosing the transport (0.3.0+):**
+
+```python
+class RejectEndpoint(Endpoint):
+    expose = "rest"   # "rest" | "mcp" | "both" (default)
+    ...
+```
+
+`"rest"` serves the HTTP route but keeps the tool out of the MCP server **and**
+the `/mcp/tools` catalog — an agent never even sees it (write endpoints an LLM
+must not call, binary downloads that make no sense as tools). `"mcp"` registers
+the tool with no public HTTP route (agent-only tools). Invalid values raise at
+class definition. The filter is one place (`Server.mcp_handlers`), so the
+catalog and the MCP server cannot disagree.
+
+**OpenAPI schemas (0.3.0/0.4.0+):** `/openapi.json` documents every operation
+from the same `mcp_definition` the MCP side publishes — REST and MCP cannot
+drift:
+
+- **Request** (0.3.0): `requestBody` for `POST/PUT/PATCH`, query `parameters`
+  otherwise, plus `operationId` and `description`. `required` mirrors
+  validation (a property without a `default`); `additionalProperties: false`
+  documents the extra-key rejection.
+- **Response** (0.4.0): declare `mcp_definition["returns"]` as the JSON Schema
+  of the callback's return value and the `200` documents the
+  `{tool, result, success}` envelope with `result` typed by it (open when
+  undeclared — the envelope alone already types the skeleton). Errors are
+  documented once, under `default`, with the error envelope.
+
+```python
+class GetProductEndpoint(Endpoint):
+    mcp_definition = {
+        "name": "get_product",
+        "description": "Get a product by ID.",
+        "parameters": {"properties": {"product_id": {"type": "string"}}},
+        "returns": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "price": {"type": "number"}},
+            "required": ["id", "price"],
+        },
+    }
+    ...
+```
+
+Generated clients (`openapi-typescript`, `openapi-python-client`, …) now get
+full request/response types — a renamed response field becomes a codegen diff
+instead of silently empty UI data.
+
 **Disabling an endpoint:**
 
 ```python

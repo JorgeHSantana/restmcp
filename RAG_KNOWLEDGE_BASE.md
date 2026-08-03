@@ -2,6 +2,12 @@
 
 Technical reference document for the Python framework **restmcp**.
 
+> **Version scope: 0.2.0.** Delta not yet incorporated (see README for both):
+> 0.3.0 added `expose = "rest" | "mcp" | "both"` per endpoint and OpenAPI
+> request schemas from `mcp_definition`; 0.4.x added response envelope
+> documentation via `mcp_definition["returns"]`. Fold these in on the next
+> full pass of this document.
+
 - Framework version documented: **0.2.0**
 - PyPI package: `restmcp`
 - License: MIT
