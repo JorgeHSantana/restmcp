@@ -2,13 +2,7 @@
 
 Technical reference document for the Python framework **restmcp**.
 
-> **Version scope: 0.2.0.** Delta not yet incorporated (see README for both):
-> 0.3.0 added `expose = "rest" | "mcp" | "both"` per endpoint and OpenAPI
-> request schemas from `mcp_definition`; 0.4.x added response envelope
-> documentation via `mcp_definition["returns"]`. Fold these in on the next
-> full pass of this document.
-
-- Framework version documented: **0.2.0**
+- Framework version documented: **0.4.1**
 - PyPI package: `restmcp`
 - License: MIT
 - Supported Python: 3.11, 3.12, 3.13
@@ -24,7 +18,7 @@ Guidance for the agent and for whoever maintains this file:
 - **Source of truth.** Answer questions about restmcp using the content below. When a question is not covered here, say so instead of guessing.
 - **Self-contained sections.** Each numbered section is written to stand on its own, so a chunk retrieved in isolation still carries enough context to be useful.
 - **Concrete examples.** Most concepts are paired with runnable code examples and, where relevant, the exact inferred output. Prefer citing these examples when explaining a concept.
-- **Version-scoped.** Everything here describes restmcp at version 0.2.0 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
+- **Version-scoped.** Everything here describes restmcp at version 0.4.1 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
 
 ---
 
@@ -311,6 +305,7 @@ Rules:
 - Class name must end with `Endpoint`.
 - Must declare `url`, `method`, and `callback`.
 - `mcp_definition` is inferred from the `callback` when not provided explicitly.
+- `expose` selects the transport: `"rest"`, `"mcp"` or `"both"` (default) — see 11.8.
 
 ```python
 from typing import Annotated
@@ -451,6 +446,52 @@ Error:
 
 REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
+### 11.8 Choosing the transport (expose) — 0.3.0+
+
+`expose` selects which transports serve the endpoint:
+
+```python
+class PurgeReadingsEndpoint(Endpoint):
+    expose = "rest"   # "rest" | "mcp" | "both" (default)
+    ...
+```
+
+- `"rest"` — the HTTP route exists, but the tool is absent from the `/mcp/tools`
+  catalog **and** from the MCP server itself. Use it for endpoints an agent must
+  not even see: write/destructive actions, binary downloads. This is a
+  structural guarantee, not a permission check — the tool does not exist on the
+  MCP side.
+- `"mcp"` — the tool exists for agents, but no public HTTP route is registered.
+- `"both"` — the default; identical to pre-0.3.0 behavior.
+
+An invalid value raises `TypeError` at class-definition time. The filter is a
+single predicate (`restmcp.rest.serves_mcp`), consumed by both the catalog and
+`Server.mcp_handlers`, so the two can never disagree. See
+`examples/telemetry/endpoints/purge_readings.py` for a worked example.
+
+### 11.9 OpenAPI schemas (0.3.0 request, 0.4.0 response)
+
+`/openapi.json` documents every operation from the same `mcp_definition` that
+the MCP side publishes — REST and OpenAPI cannot drift:
+
+- **Request** (0.3.0): `POST/PUT/PATCH` get a `requestBody` schema; other
+  methods get query `parameters`. `operationId` is the tool name and
+  `description` is the tool description. `required` mirrors validation (a
+  property without a `default` key); `additionalProperties: false` documents
+  the extra-key rejection.
+- **Response** (0.4.0): declare `mcp_definition["returns"]` as the JSON Schema
+  of the callback's return value — the same slot the `/mcp/tools` catalog
+  publishes. The `200` response documents the `{tool, result, success}`
+  envelope with `result` typed by it; when `returns` is not declared, `result`
+  stays open but the envelope itself is still typed. Errors are documented once
+  under `default` with the error envelope
+  (`{tool, error, success, error_type}`). A non-dict `returns` raises
+  `TypeError` at class-definition time.
+
+Generated clients (`openapi-typescript`, `openapi-python-client`) therefore get
+full request/response types: a renamed response field becomes a codegen diff
+instead of silently empty client data.
+
 ---
 
 ## 12. Server
@@ -501,7 +542,7 @@ Built-in routes:
 | Route | Method | Authentication | Response |
 |---|---|---|---|
 | `/health` | GET | No | `{"status": "healthy", "timestamp": "<ISO 8601>"}` |
-| `/mcp/tools` | GET | No | Tool catalog: list of `{name, description, parameters, returns}`, plus `server` and `version`. |
+| `/mcp/tools` | GET | No | Tool catalog: list of `{name, description, parameters, returns}`, plus `server` and `version`. Lists only the MCP surface — endpoints with `expose = "rest"` are omitted (11.8). |
 | `/mcp/tools/<name>` | POST | Yes (if `AUTH_API_KEY` set) | Executes the corresponding tool. |
 | User endpoints | per `method` | Yes (if `AUTH_API_KEY` set) | Envelope `{tool, result, success}`. |
 
@@ -513,7 +554,7 @@ The `/mcp/tools` route returns the `version` field read from the installed packa
 
 ## 14. MCP layer
 
-The MCP server is built by the `McpApp` class, which creates a `FastMCP("restmcp")` and registers each handler as a tool. For each endpoint, restmcp dynamically builds a typed wrapper function from the `mcp_definition`:
+The MCP server is built by the `McpApp` class, which creates a `FastMCP("restmcp")` and registers each handler as a tool. Only handlers on the MCP surface participate (`Server.mcp_handlers` — endpoints with `expose = "rest"` are excluded, see 11.8). For each endpoint, restmcp dynamically builds a typed wrapper function from the `mcp_definition`:
 
 - The JSON type of each property is mapped to the Python type (`string` to `str`, `integer` to `int`, `number` to `float`, `boolean` to `bool`, `object` to `dict`, `array` to `List[item]`).
 - A property whose `default` is `None` becomes `Optional[...]`.
@@ -860,7 +901,7 @@ Symbols exported by `restmcp` (via `from restmcp import ...`):
 
 ## 28. Example catalog by scenario
 
-This section collects short, focused recipes, one per common need. All examples apply to restmcp 0.2.0.
+This section collects short, focused recipes, one per common need. All examples apply to restmcp 0.4.1.
 
 ### 28.1 Minimal endpoint with one required parameter
 
@@ -1711,4 +1752,4 @@ async def callback(self, product_id: str) -> dict:
 
 ## 32. Summary
 
-restmcp 0.2.0 turns annotated Python classes into MCP tools and REST endpoints simultaneously, with a five-layer architecture (DataSource, Entity, Repository, Service, Endpoint), auto-registration at class definition, dependency injection by isolated copy, and transparent support for synchronous and asynchronous callbacks. The MCP tool definition is inferred from the callback signature and docstring, requiring a `Returns:` section that describes the return value for the MCP client. A single `asgi_app()` serves REST and MCP with optional Bearer authentication, and the tool catalog is available at `/mcp/tools`.
+restmcp 0.4.1 turns annotated Python classes into MCP tools and REST endpoints simultaneously, with a five-layer architecture (DataSource, Entity, Repository, Service, Endpoint), auto-registration at class definition, dependency injection by isolated copy, and transparent support for synchronous and asynchronous callbacks. The MCP tool definition is inferred from the callback signature and docstring, requiring a `Returns:` section that describes the return value for the MCP client. A single `asgi_app()` serves REST and MCP with optional Bearer authentication, and the tool catalog is available at `/mcp/tools`.
