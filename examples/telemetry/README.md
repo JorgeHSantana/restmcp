@@ -18,6 +18,7 @@ fleet in memory, so `python main.py` just works.
 | `Endpoint` auto-registration | [endpoints/](endpoints/) |
 | Array params + manual ISO date coercion in the callback | [endpoints/check_battery.py](endpoints/check_battery.py) |
 | Automatic `datetime` → ISO 8601 serialization | [endpoints/get_device.py](endpoints/get_device.py) |
+| `expose = "rest"` (tool invisível ao MCP) + `returns` schema no OpenAPI | [endpoints/purge_readings.py](endpoints/purge_readings.py) |
 | `NotFoundError` / `ValidationError` → HTTP 404/400 | [endpoints/get_device.py](endpoints/get_device.py) |
 | One ASGI app for REST **and** MCP via `asgi_app()` | [main.py](main.py) |
 | Bearer auth over REST + MCP (`AUTH_API_KEY`) | [main.py](main.py) |

@@ -11,7 +11,9 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
-_(nothing yet)_
+### Fixed
+- `examples/telemetry/README.md`: feature table now lists the
+  `purge_readings` endpoint (expose + returns) added in 0.4.1.
 
 ## [0.5.0] - 2026-08-03
 
