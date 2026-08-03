@@ -435,12 +435,31 @@ def test_get_product():
 
 ---
 
+## Key identity and scopes (0.5.0+)
+
+`AUTH_API_KEY` entries accept an optional `name:key:scope` form alongside the
+plain `key` form (which keeps full scope):
+
+```bash
+export AUTH_API_KEY="painel:sk_abc:read, campo:sk_def:read+write, sk_legacy"
+```
+
+The matched principal `{"name", "scopes"}` is published as `request.state.auth`
+and via the `restmcp.auth.current_auth` contextvar (visible inside sync
+callbacks too). Declare `required_scope = "write"` on an `Endpoint` to get a
+`403` before the callback when the key lacks it (REST path; on the MCP side,
+hide sensitive tools with `expose = "rest"`). The secret itself never
+propagates.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AUTH_API_KEY` | _(disabled)_ | Bearer token. Multiple keys supported comma-separated. |
-| `CORS_ORIGINS` | `*` | Allowed origins. Multiple values supported comma-separated. |
+| `CORS_ORIGINS` | *(unset — deny)* | Allowed origins, comma-separated. **Absent or empty denies cross-origin (0.5.0; was `*`)** — set `'*'` explicitly to allow any. A warning is logged when denied by omission. |
+| `MAX_BODY_BYTES` | `1048576` | Global request-body ceiling (bytes); bodies over it get **413**. Override per endpoint with the `max_body_bytes` class attribute. |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ---

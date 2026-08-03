@@ -27,18 +27,29 @@ class Service(ABC):
             )
 
     def __init__(self, **overrides):
+        # Issue #14: a Service holds more than repositories (webhook publisher,
+        # clock, pre-built aggregation source). Every declared non-callable,
+        # non-underscore class attribute is injectable via the constructor —
+        # otherwise tests are forced into monkey patching after construction.
+        # Repositories keep the per-instance copy.copy; other attributes stay
+        # shared class defaults unless overridden. The at-least-one-Repository
+        # rule (__init_subclass__) is unchanged: this widens injection, not
+        # the layer discipline.
         seen = set()
         remaining = dict(overrides)
         for klass in type(self).__mro__:
+            if klass in (Service, object):
+                continue
             for name, value in vars(klass).items():
-                if name not in seen and isinstance(value, Repository):
-                    seen.add(name)
-                    if name in remaining:
-                        setattr(self, name, remaining.pop(name))
-                    else:
-                        setattr(self, name, copy.copy(value))
+                if name.startswith("_") or name in seen or callable(value):
+                    continue
+                seen.add(name)
+                if name in remaining:
+                    setattr(self, name, remaining.pop(name))
+                elif isinstance(value, Repository):
+                    setattr(self, name, copy.copy(value))
         if remaining:
             raise TypeError(
                 f"{type(self).__name__}: unknown override(s) {sorted(remaining)} — "
-                f"known Repository attributes: {sorted(seen)}"
+                f"known attributes: {sorted(seen)}"
             )

@@ -444,7 +444,7 @@ Error:
 { "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
 ```
 
-REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
+REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. A body that is present but is not valid JSON is a `ValidationError` (HTTP 400) since 0.5.0 — it is no longer silently treated as empty; an absent/empty body remains tolerated (query-string-only calls). Bodies above the ceiling (`MAX_BODY_BYTES`, default 1 MiB, or the endpoint's `max_body_bytes`) are HTTP 413 before buffering. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
 ### 11.8 Choosing the transport (expose) — 0.3.0+
 
@@ -535,7 +535,7 @@ Important: do **not** call `server.app.mount(...)` directly to mount MCP; that r
 
 ## 13. REST layer and default routes
 
-The REST application is a FastAPI with configurable CORS and default routes. CORS origins come from the `CORS_ORIGINS` variable (default `*`, multiple values comma-separated).
+The REST application is a FastAPI with configurable CORS and default routes. CORS origins come from the `CORS_ORIGINS` variable (comma-separated). Since 0.5.0 the safe default is **deny**: absent or effectively-empty values add no CORS middleware (cross-origin browser requests are refused) and a warning is logged; set `CORS_ORIGINS='*'` explicitly to allow any origin (the pre-0.5.0 default).
 
 Built-in routes:
 
@@ -566,6 +566,15 @@ The function name (`__name__`), the documentation (`__doc__`, equal to the descr
 ---
 
 ## 15. Authentication
+
+Since 0.5.0, `AUTH_API_KEY` entries accept `name:key:scope` (scope = `+`-joined
+set, e.g. `read+write`) alongside the plain `key` form (full scope). The
+matched principal `{"name", "scopes"}` is published as `request.state.auth` and
+via the `restmcp.auth.current_auth` contextvar — visible in sync callbacks
+(run_callback copies the context into the worker thread). An `Endpoint` may
+declare `required_scope = "write"`: enforced before the callback on the REST
+path, returning 403 with `error_type: ForbiddenError`. Original section:
+
 
 Authentication is via Bearer token, enabled only when the environment variable `AUTH_API_KEY` is defined. When absent, all routes are open.
 

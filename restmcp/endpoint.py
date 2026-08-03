@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse
 
 from pydantic import ValidationError as PydanticValidationError
 
-from restmcp.exceptions import RestMCPException, ValidationError
+from restmcp.exceptions import (
+    ForbiddenError,
+    PayloadTooLargeError,
+    RestMCPException,
+    ValidationError,
+)
 from restmcp.logging import Logger
 from restmcp.schema import build_arg_model, check_property_name
 
@@ -27,8 +32,10 @@ async def run_callback(callback: object, /, **kwargs):
     """
     if inspect.iscoroutinefunction(callback):
         return await callback(**kwargs)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: callback(**kwargs))
+    # to_thread copies the caller's contextvars into the worker thread
+    # (run_in_executor does not), so identity/correlation vars set by
+    # middleware survive the hop (issue #16).
+    return await asyncio.to_thread(callback, **kwargs)
 
 
 def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
@@ -78,6 +85,16 @@ class Endpoint(ABC):
     # "both" — existing endpoints are untouched.
     expose: str = "both"
     _EXPOSE_VALUES = ("rest", "mcp", "both")
+    # Ceiling for the request body, in bytes. None = the global default
+    # (env MAX_BODY_BYTES, 1 MiB). Bodies over the ceiling get 413 before
+    # buffering (issue #12) — raise it per endpoint for known-large payloads
+    # (e.g. base64 uploads).
+    max_body_bytes: int | None = None
+    # Scope this endpoint demands from the authenticated key (issue #15,
+    # step 2): e.g. "write". None = any authenticated key. Enforced on the
+    # REST path before the callback; no-op when auth is disabled. On the MCP
+    # side, hide sensitive tools structurally with expose = "rest".
+    required_scope: str | None = None
     _registered: bool = False  # per-subclass; set after successful registration
 
     def __init_subclass__(cls, **kwargs):
@@ -134,10 +151,29 @@ class Endpoint(ABC):
 
     async def _callback(self, request: Request):
         try:
-            try:
-                body = await request.json()
-            except Exception:
-                body = None
+            # The auth dependency runs in a threadpool (it is sync), so a
+            # contextvar set there dies with the thread; the principal survives
+            # in scope["state"]. Promote it here, in the request task, so
+            # callbacks (sync included, via to_thread) can read current_auth.
+            principal = request.scope.get("state", {}).get("auth")
+            if principal is not None:
+                from restmcp.auth import current_auth
+
+                current_auth.set(principal)
+            self._enforce_scope(principal)
+            raw = await self._read_body_capped(request)
+            if not raw or not raw.strip():
+                body = {}          # absent body: query-string-only calls are fine
+            else:
+                import json as _json
+                try:
+                    body = _json.loads(raw)
+                except ValueError:
+                    # A body was sent but is not JSON — that is a client error,
+                    # not an empty body: swallowing it let defaults turn a
+                    # truncated payload into a different, "successful" call
+                    # (issue #13).
+                    raise ValidationError("Request body is not valid JSON")
             if body is None:
                 body = {}
             if not isinstance(body, dict):
@@ -189,6 +225,48 @@ class Endpoint(ABC):
                 "success": False,
                 "error_type": "InternalServerError",
             }), status_code=500)
+
+    def _enforce_scope(self, principal: dict | None) -> None:
+        """403 when the authenticated key lacks this endpoint's required_scope.
+
+        Authorization only — authentication already happened (middleware or
+        dependency). With auth disabled there is no principal and no check."""
+        import os as _os
+
+        if not self.required_scope or not _os.getenv("AUTH_API_KEY"):
+            return
+        if principal is None or self.required_scope not in principal["scopes"]:
+            who = (principal or {}).get("name") or "key"
+            raise ForbiddenError(
+                f"{who} lacks the {self.required_scope!r} scope required by "
+                f"{self.mcp_definition['name']!r}"
+            )
+
+    async def _read_body_capped(self, request: Request) -> bytes:
+        """Read the body enforcing the ceiling BEFORE buffering it whole.
+
+        Declared Content-Length over the limit is refused without reading;
+        without (or lying) Content-Length, the stream is read in chunks and
+        aborted the moment the accumulated size crosses the ceiling — the
+        process never allocates more than limit + one chunk (issue #12)."""
+        import os as _os
+
+        limit = self.max_body_bytes or int(_os.getenv("MAX_BODY_BYTES", 1_048_576))
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > limit:
+            raise PayloadTooLargeError(
+                f"Request body of {declared} bytes exceeds the limit of {limit} bytes"
+            )
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise PayloadTooLargeError(
+                    f"Request body exceeds the limit of {limit} bytes"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def __init__(self):
         from restmcp.server import Server

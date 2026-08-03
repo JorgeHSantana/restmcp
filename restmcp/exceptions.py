@@ -15,3 +15,13 @@ class ValidationError(RestMCPException):
 class NotFoundError(RestMCPException):
     def __init__(self, message: str):
         super().__init__(message, status_code=404)
+
+
+class PayloadTooLargeError(RestMCPException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=413)
+
+
+class ForbiddenError(RestMCPException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=403)

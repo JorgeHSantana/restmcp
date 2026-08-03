@@ -5,6 +5,10 @@ from typing import Any, List
 from fastapi import FastAPI, HTTPException, Request
 from starlette.middleware.cors import CORSMiddleware
 
+from restmcp.logging import Logger
+
+_rest_logger = Logger("restmcp.rest")
+
 
 def _package_version() -> str:
     from importlib.metadata import PackageNotFoundError, version
@@ -12,11 +16,6 @@ def _package_version() -> str:
         return version("restmcp")
     except PackageNotFoundError:
         return "0.0.0"
-
-
-def _validate_api_key(raw_key: str) -> bool:
-    from restmcp.auth import _valid_token
-    return _valid_token(raw_key)
 
 
 def serves_mcp(handler) -> bool:
@@ -29,10 +28,16 @@ def serves_mcp(handler) -> bool:
 def _auth_dependency(request: Request):
     if not os.getenv("AUTH_API_KEY"):
         return
-    auth_header = request.headers.get("Authorization")
-    api_key = auth_header.split(" ")[1] if auth_header and auth_header.startswith("Bearer ") else None
-    if not api_key or not _validate_api_key(api_key):
+    from restmcp.auth import current_auth, match_token, token_from_authorization
+
+    token = token_from_authorization(request.headers.get("Authorization") or "")
+    principal = match_token(token) if token else None
+    if principal is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    # Starlette convention: request.state.auth; plus the contextvar, which
+    # run_callback carries into sync callbacks (issues #15/#16).
+    request.scope.setdefault("state", {})["auth"] = principal
+    current_auth.set(principal)
 
 
 class RestApp:
@@ -40,13 +45,28 @@ class RestApp:
 
     def __init__(self):
         self.app = FastAPI()
-        cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        # Issue #11: absent used to default to "*" (any origin, silently) and
+        # empty produced allow_origins=[""] (blocks everything, silently, and
+        # looks like a front-end bug). Safe default is DENY, loudly:
+        raw = os.getenv("CORS_ORIGINS")
+        cors_origins = [o.strip() for o in raw.split(",") if o.strip()] if raw else []
+        if raw is None:
+            _rest_logger.warning(
+                "CORS_ORIGINS not set — cross-origin browser requests are denied. "
+                "Set CORS_ORIGINS (e.g. 'https://app.example.com' or '*') to allow."
+            )
+        elif not cors_origins:
+            _rest_logger.warning(
+                "CORS_ORIGINS is set but contains no origin (%r) — cross-origin "
+                "requests are denied. Did you mean CORS_ORIGINS='*'?", raw
+            )
+        if cors_origins:
+            self.app.add_middleware(
+                CORSMiddleware,
+                allow_origins=cors_origins,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
         self.url_handlers: List[Any] = []
         self._setup_default_routes()
 

@@ -13,6 +13,43 @@ this file move together — the publish workflow releases whatever version is in
 
 _(nothing yet)_
 
+## [0.5.0] - 2026-08-03
+
+Six tracked issues closed in one pass (#11-#16), all TDD.
+
+### Changed (breaking)
+- **CORS safe default** (#11): absent `CORS_ORIGINS` now **denies**
+  cross-origin requests (was `*` — any origin, silently); effectively-empty
+  values (`""`, `","`) also deny instead of producing the
+  blocks-everything-silently `[""]`. Both cases log a warning. Set
+  `CORS_ORIGINS='*'` explicitly to restore the old behavior.
+- **Malformed JSON is now HTTP 400** (#13): a body that is present but not
+  valid JSON raises `ValidationError` instead of being silently treated as
+  empty (defaults could turn a truncated payload into a different,
+  "successful" call). Absent/empty bodies remain tolerated.
+
+### Added
+- **Request-body ceiling with 413** (#12): global `MAX_BODY_BYTES` (default
+  1 MiB) enforced before buffering — declared Content-Length is refused
+  upfront, streams are cut at the limit; per-endpoint override via the
+  `max_body_bytes` class attribute. New `PayloadTooLargeError` (413).
+- **Key identity and scopes** (#15): `AUTH_API_KEY` accepts `name:key:scope`
+  entries (plain `key` keeps full scope); the matched principal
+  `{"name", "scopes"}` is published as `request.state.auth` and via the
+  `restmcp.auth.current_auth` contextvar; `Endpoint.required_scope` returns
+  403 (`ForbiddenError`) before the callback. Bearer parsing unified in
+  `token_from_authorization` (two subtly-different copies before).
+- **Service DI beyond Repository** (#14): any declared non-callable,
+  non-underscore class attribute is injectable via the constructor (webhook
+  publishers, clocks, aggregation sources); Repositories keep the
+  per-instance `copy.copy`; the at-least-one-Repository rule is unchanged.
+
+### Fixed
+- **contextvars survive the thread hop** (#16): sync callbacks now run via
+  `asyncio.to_thread` (copies the caller's context) instead of a bare
+  `run_in_executor` — identity/correlation vars set by middleware reach the
+  callback.
+
 ## [0.4.1] - 2026-08-03
 
 ### Added
@@ -84,7 +121,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.2.0...v0.3.0
