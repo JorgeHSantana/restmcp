@@ -56,6 +56,12 @@ def _validate_mcp_definition(cls_name: str, mcp_def: object) -> None:
         if isinstance(props, dict):
             for prop_name in props:
                 check_property_name(cls_name, prop_name)
+    returns = mcp_def.get("returns")
+    if returns is not None and not isinstance(returns, dict):
+        raise TypeError(
+            f"{cls_name}: mcp_definition['returns'] must be a dict (the JSON "
+            f"Schema of the callback's return value), got {type(returns).__name__}"
+        )
 
 
 class Endpoint(ABC):
@@ -263,7 +269,7 @@ class Endpoint(ABC):
                     dependencies=[Depends(_auth_dependency)],
                     operation_id=self.mcp_definition["name"],
                     description=self.mcp_definition.get("description"),
-                    openapi_extra=_openapi_params(self.mcp_definition, self.method),
+                    openapi_extra=_openapi_extra(self.mcp_definition, self.method),
                 )
             except Exception:
                 server.unregister_url_handler(self)
@@ -272,6 +278,59 @@ class Endpoint(ABC):
 
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+_ERROR_ENVELOPE = {
+    "type": "object",
+    "properties": {
+        "tool": {"type": "string"},
+        "error": {"type": "string"},
+        "success": {"type": "boolean"},
+        "error_type": {"type": "string"},
+    },
+    "required": ["tool", "error", "success", "error_type"],
+}
+
+
+def _openapi_extra(mcp_definition: dict, method: str) -> dict:
+    """Request AND response metadata for a route (issue #52 parts A and B)."""
+    extra = _openapi_params(mcp_definition, method) or {}
+    extra["responses"] = _openapi_responses(mcp_definition)
+    return extra
+
+
+def _openapi_responses(mcp_definition: dict) -> dict:
+    """Document what a route actually sends back.
+
+    Every success travels in the ``{tool, result, success}`` envelope, so the
+    envelope is what OpenAPI describes — with ``result`` typed by the
+    ``returns`` JSON Schema when the endpoint declares one (the same slot the
+    /mcp/tools catalog publishes) and left open otherwise: the envelope alone
+    already gives generated clients a typed skeleton instead of nothing. Errors
+    always use the error envelope (see ``_callback``), documented once under
+    ``default``. This is part B of ReconcilIA issue #52 — before it, a renamed
+    response field compiled fine on the client and simply showed empty data.
+    """
+    result_schema = mcp_definition.get("returns") or {}
+    success_envelope = {
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string"},
+            "result": result_schema,
+            "success": {"type": "boolean"},
+        },
+        "required": ["tool", "result", "success"],
+    }
+    return {
+        "200": {
+            "description": "Envelope de sucesso",
+            "content": {"application/json": {"schema": success_envelope}},
+        },
+        "default": {
+            "description": "Envelope de erro (validação, conflito ou falha interna)",
+            "content": {"application/json": {"schema": _ERROR_ENVELOPE}},
+        },
+    }
 
 
 def _openapi_params(mcp_definition: dict, method: str) -> dict | None:
