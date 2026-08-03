@@ -66,6 +66,13 @@ my-server/
 
 ---
 
+## Changelog
+
+Release-by-release record in [CHANGELOG.md](CHANGELOG.md) — every behavior/API
+change lands there under *Unreleased* and ships with the version bump.
+
+---
+
 ## Breaking changes in 0.2.0
 
 Definition errors now fail at **registration (import time)** instead of per-request, always naming the endpoint class or tool:
