@@ -583,6 +583,7 @@ How it works:
 - The token is compared, with `hmac.compare_digest` (constant-time comparison), against the configured keys.
 - Multiple keys are supported, comma-separated in `AUTH_API_KEY`.
 - Routes in `public_paths` (default `/health` and `/mcp/tools`) and paths under `/.well-known/` (MCP OAuth discovery) remain public.
+- **CORS preflight passes through auth** (0.5.1): a request that is strictly a preflight (`OPTIONS` + `Access-Control-Request-Method` header) is exempt from authentication, because the browser never sends `Authorization` on preflights (CORS spec) — blocking it would 401 before `CORSMiddleware` could answer, killing every cross-origin call even with a valid token. A bare `OPTIONS` gets no free pass, and the actual request still authenticates.
 
 There are two complementary protection layers:
 - In REST, each endpoint route gets an authentication dependency (`_auth_dependency`) that responds 401 without a valid token.
