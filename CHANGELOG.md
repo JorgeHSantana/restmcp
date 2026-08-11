@@ -11,7 +11,17 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-11
+
 ### Fixed
+- **CORS preflight passes through auth** (#17): with `AUTH_API_KEY` set,
+  `AuthMiddleware` wraps the whole app — including `CORSMiddleware` — so the
+  browser's `OPTIONS` preflight (which never carries `Authorization`, per the
+  CORS spec) got 401 before CORS could answer, blocking every cross-origin
+  call even with a valid token. A request is only exempt when it is strictly
+  a preflight (`OPTIONS` + `Access-Control-Request-Method`); a bare `OPTIONS`
+  still authenticates, and so does the actual request. Found on ReconcilIA's
+  first real browser-to-authenticated-backend session.
 - `examples/telemetry/README.md`: feature table now lists the
   `purge_readings` endpoint (expose + returns) added in 0.4.1.
 
@@ -123,7 +133,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.3.0...v0.4.0

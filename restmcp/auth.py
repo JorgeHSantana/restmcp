@@ -90,6 +90,18 @@ class AuthMiddleware:
             return await self.app(scope, receive, send)
 
         headers = dict(scope.get("headers", []))
+
+        # CORS preflight passes through (issue #17): the browser NEVER sends
+        # Authorization on the preflight (CORS spec), so answering 401 here
+        # blocks the front even when it holds a valid token — the CORSMiddleware
+        # downstream never gets to reply. A preflight is strictly
+        # OPTIONS + Access-Control-Request-Method; a bare OPTIONS gets no free
+        # pass, and the actual request still authenticates below.
+        if (
+            scope.get("method") == "OPTIONS"
+            and b"access-control-request-method" in headers
+        ):
+            return await self.app(scope, receive, send)
         auth = headers.get(b"authorization", b"").decode("utf-8", "ignore")
         token = token_from_authorization(auth)
         principal = match_token(token) if token else None
