@@ -19,6 +19,8 @@ fleet in memory, so `python main.py` just works.
 | Array params + manual ISO date coercion in the callback | [endpoints/check_battery.py](endpoints/check_battery.py) |
 | Automatic `datetime` → ISO 8601 serialization | [endpoints/get_device.py](endpoints/get_device.py) |
 | `expose = "rest"` (tool invisível ao MCP) + `returns` schema no OpenAPI | [endpoints/purge_readings.py](endpoints/purge_readings.py) |
+| `success_code = 202` (aceito ≠ pronto; o OpenAPI documenta o código real) | [endpoints/recalibrate_fleet.py](endpoints/recalibrate_fleet.py) |
+| `raw_response = True` (download CSV cru; erros seguem no envelope; exige `expose="rest"`) | [endpoints/export_readings.py](endpoints/export_readings.py) |
 | `NotFoundError` / `ValidationError` → HTTP 404/400 | [endpoints/get_device.py](endpoints/get_device.py) |
 | One ASGI app for REST **and** MCP via `asgi_app()` | [main.py](main.py) |
 | Bearer auth over REST + MCP (`AUTH_API_KEY`) | [main.py](main.py) |
@@ -55,9 +57,23 @@ curl -X POST http://localhost:8000/api/check-battery \
 # Cached rollup — call twice within 30s, the server logs "computing" only once:
 curl -X POST http://localhost:8000/api/fleet-report \
   -H 'content-type: application/json' -d '{}'
+
+# 202 Accepted (success_code): the envelope carries a TICKET, not a result —
+# watch the status line with -i:
+curl -i -X POST http://localhost:8000/api/recalibrate-fleet \
+  -H 'content-type: application/json' -d '{}'
+
+# Raw CSV download (raw_response): no envelope — the body IS the file, with
+# content-disposition. Invisible to MCP (expose="rest"):
+curl -OJ "http://localhost:8000/api/export-readings?device_id=1"
+
+# Error on a raw endpoint still uses the standard error envelope (lock 3):
+curl "http://localhost:8000/api/export-readings?device_id=99"
 ```
 
-Every response uses the framework envelope:
+Every enveloped response uses the framework shape (raw endpoints excepted —
+their success is whatever `Response` they return; their **errors** still use
+the error envelope):
 
 ```json
 { "tool": "check_battery", "result": { "...": [] }, "success": true }

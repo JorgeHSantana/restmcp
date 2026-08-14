@@ -91,3 +91,36 @@ def test_purge_discards_and_reports_count():
     assert svc.purge_readings(10) == 0          # nothing left to drop
     with pytest.raises(NotFoundError):
         svc.purge_readings(99)
+
+
+# ---- 0.6.0: success_code e raw_response, pelas camadas de serviço ----------
+
+
+def test_recalibration_devolve_ticket_aceito():
+    svc = _service()
+    job = svc.schedule_recalibration([10, 11])
+    assert job["status"] == "accepted"
+    assert job["devices"] == [10, 11]
+    assert job["job_id"]
+
+
+def test_recalibration_de_device_desconhecido_e_not_found():
+    import pytest
+    from restmcp.exceptions import NotFoundError
+    with pytest.raises(NotFoundError):
+        _service().schedule_recalibration([99])
+
+
+def test_export_csv_e_texto_ordenado_por_data():
+    csv = _service().export_csv(10)
+    linhas = csv.strip().split("\n")
+    assert linhas[0] == "device_id,status,recorded_at"
+    assert all(linha.startswith("10,") for linha in linhas[1:])
+    assert len(linhas) > 1
+
+
+def test_export_de_device_desconhecido_e_not_found():
+    import pytest
+    from restmcp.exceptions import NotFoundError
+    with pytest.raises(NotFoundError):
+        _service().export_csv(99)

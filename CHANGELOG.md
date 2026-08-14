@@ -11,6 +11,40 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-13
+
+Issue #18, both halves — the status code stops being hardwired.
+
+### Added
+- **`success_code`** (#18): class-level declaration of the success envelope's
+  HTTP status (default 200 — no existing endpoint changes). One declaration
+  feeds the `JSONResponse` AND the OpenAPI document, so a frozen contract
+  cannot disagree with the server. 2xx only, validated at class definition;
+  204 rejected (No Content forbids a body, the envelope always has one).
+  Errors keep coming from exception classes. Born for ReconcilIA's
+  `POST /runs` → 202 Accepted.
+- **`raw_response`** (#18): the FastAPI escape hatch — the callback returns a
+  Starlette `Response` and it passes through verbatim (files, redirects,
+  conditional codes, custom headers). Three locks: requires `expose="rest"`
+  (raw has no MCP representation — import-time error otherwise, and
+  `success_code` alongside it is rejected as conflicting); opt-in declared
+  (a `Response` returned without the flag is a 500 with a pointed log message,
+  never a silent passthrough — and raw returning plain data errors
+  symmetrically); success only (exceptions still produce the standard error
+  envelope, and the request pipeline — auth, scopes, body cap, validation —
+  applies unchanged). In OpenAPI a raw operation documents one honest
+  `default`; FastAPI's automatic success block is pruned via the `openapi()`
+  override in `RestApp`.
+- `examples/telemetry`: two new endpoints exercising both features through all
+  layers — `recalibrate_fleet` (202 ticket) and `export_readings` (raw CSV
+  download with the 404 path proving errors stay enveloped) — plus README
+  rows, curl walkthrough and service-level tests.
+
+### Changed
+- Routes are now registered with FastAPI's `status_code` parameter derived
+  from `success_code`, so FastAPI's automatic OpenAPI success block lands on
+  the declared code instead of leaving a phantom `"200"` beside a custom one.
+
 ## [0.5.1] - 2026-08-11
 
 ### Fixed
@@ -133,7 +167,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.4.0...v0.4.1

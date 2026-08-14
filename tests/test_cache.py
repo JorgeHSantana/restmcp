@@ -22,11 +22,16 @@ def test_caches_by_args():
 
 def test_ttl_expires():
     class S2:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
         @cached_method(ttl=0.05)
         def get(self):
-            self.calls += 1; return 1
-    s = S2(); s.get(); time.sleep(0.07); s.get()
+            self.calls += 1
+            return 1
+    s = S2()
+    s.get()
+    time.sleep(0.07)
+    s.get()
     assert s.calls == 2
 
 
@@ -34,7 +39,8 @@ def test_caches_non_hashable_args():
     """Motivating case from the issue: Repository.get(id_list=[...]). A list is
     NOT hashable — a hash/tuple-based key would raise TypeError here."""
     class S3:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
         @cached_method(ttl=60)
         def get(self, ids):
             self.calls += 1
@@ -50,13 +56,15 @@ def test_caches_non_hashable_args():
 def test_maxsize_evicts_oldest():
     """The store is bounded: past maxsize, the oldest entry is dropped (FIFO)."""
     class S4:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
         @cached_method(ttl=60, maxsize=2)
         def get(self, x):
             self.calls += 1
             return x
     s = S4()
-    s.get(1); s.get(2)          # store: {1, 2}, 2 misses
+    s.get(1)
+    s.get(2)                    # store: {1, 2}, 2 misses
     assert s.calls == 2
     s.get(2)                    # hit, store unchanged
     assert s.calls == 2

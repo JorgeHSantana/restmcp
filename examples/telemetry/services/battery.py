@@ -60,6 +60,36 @@ class BatteryHealthService(Service):
             result["no_data"] = missing
         return {k: sorted(v) for k, v in result.items()}
 
+    def export_csv(self, device_id: int) -> str:
+        """One device's readings as CSV text (0.6.0 example: raw download).
+
+        The Service returns a STRING — it knows nothing about HTTP. Turning it
+        into a file download (headers, content-disposition, status) is the
+        endpoint's job: transport lives at the edge, like everywhere else here.
+        """
+        if device_id not in self.readings.known_device_ids():
+            raise NotFoundError(f"Unknown device {device_id}")
+        rows = ["device_id,status,recorded_at"]
+        for r in sorted(self.readings.get(device_id_list=[device_id]),
+                        key=lambda r: r.recorded_at):
+            rows.append(f"{r.device_id},{r.status},{r.recorded_at.isoformat()}")
+        return "\n".join(rows) + "\n"
+
+    def schedule_recalibration(self, device_id_list: list[int] | None = None) -> dict:
+        """Accept a recalibration job and return its ticket (0.6.0 example: 202).
+
+        Simulates the accept-then-work pattern: the job is REGISTERED now (the
+        202 response carries its id) and would be processed out of band. What
+        matters for the example is the semantics: the response says "accepted",
+        never "done".
+        """
+        devices = device_id_list or self.readings.known_device_ids()
+        desconhecidos = [d for d in devices if d not in self.readings.known_device_ids()]
+        if desconhecidos:
+            raise NotFoundError(f"Unknown devices: {desconhecidos}")
+        job_id = f"recal-{len(devices)}-{min(devices)}{max(devices)}"
+        return {"job_id": job_id, "devices": sorted(devices), "status": "accepted"}
+
     @cached_method(ttl=30)
     def fleet_report(self, device_id_list: list[int] | None = None) -> dict:
         """Expensive fleet-wide rollup, memoized for 30s.

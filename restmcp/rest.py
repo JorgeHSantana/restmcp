@@ -45,6 +45,22 @@ class RestApp:
 
     def __init__(self):
         self.app = FastAPI()
+        # Rotas raw_response (issue #18): o FastAPI injeta um bloco de sucesso
+        # automático em TODA operação do OpenAPI e não há como suprimi-lo por
+        # rota — a poda vive aqui, no dono do documento. As rotas se inscrevem
+        # em app.state.raw_routes ao registrar (endpoint.py); o pop é idempotente
+        # sobre o schema cacheado.
+        _openapi_original = self.app.openapi
+
+        def _openapi_sem_sucesso_automatico_nas_cruas():
+            schema = _openapi_original()
+            for path, method in getattr(self.app.state, "raw_routes", ()):
+                operacao = schema.get("paths", {}).get(path, {}).get(method)
+                if operacao:
+                    operacao.get("responses", {}).pop("200", None)
+            return schema
+
+        self.app.openapi = _openapi_sem_sucesso_automatico_nas_cruas
         # Issue #11: absent used to default to "*" (any origin, silently) and
         # empty produced allow_origins=[""] (blocks everything, silently, and
         # looks like a front-end bug). Safe default is DENY, loudly:

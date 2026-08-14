@@ -287,6 +287,49 @@ Generated clients (`openapi-typescript`, `openapi-python-client`, …) now get
 full request/response types — a renamed response field becomes a codegen diff
 instead of silently empty UI data.
 
+**Success status code (0.6.0+):** the HTTP code of the success envelope is a
+*declaration*, and the same declaration feeds the response and the OpenAPI
+document — they cannot disagree:
+
+```python
+class StartRunEndpoint(Endpoint):
+    success_code = 202   # "accepted, poll for the outcome" — default 200
+    ...
+```
+
+2xx only, validated at class definition; `204` is rejected (No Content forbids
+a body, the envelope always has one). Errors ignore it — their code comes from
+the exception class (`RestMCPException.status_code`), so the full picture is:
+**error code = exception type, success code = endpoint declaration.**
+
+**Raw responses (0.6.0+):** the FastAPI escape hatch, for responses that do not
+fit the envelope (file downloads, redirects, conditional codes, custom
+headers). Three locks:
+
+```python
+class ExportCsvEndpoint(Endpoint):
+    expose = "rest"        # lock 1: no MCP side — required, or import fails
+    raw_response = True    # lock 2: opt-in, never inferred from the return type
+    ...
+    def callback(self, device_id):
+        return PlainTextResponse(csv, media_type="text/csv",
+                                 headers={"content-disposition": "attachment"})
+```
+
+1. **Requires `expose = "rest"`** — a raw HTTP response has no MCP
+   representation, so the tool must not exist on that side.
+2. **Opt-in declared** — a callback returning a `Response` *without* the flag
+   is a programming error (500, pointed message in the log), never a silent
+   passthrough; declared but returning plain data errors the same way.
+3. **Success only** — exceptions raised in a raw endpoint still produce the
+   standard error envelope with the exception's status code: clients keep one
+   error format everywhere. Auth, scopes, body limits and parameter validation
+   also apply unchanged — the hatch is about the response, not the pipeline.
+
+In OpenAPI a raw operation promises nothing it cannot keep: no success
+envelope, one honest `default` describing that code, headers and body belong
+to the endpoint.
+
 **Disabling an endpoint:**
 
 ```python

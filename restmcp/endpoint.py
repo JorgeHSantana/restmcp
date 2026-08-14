@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from pydantic import ValidationError as PydanticValidationError
+from starlette.responses import Response as StarletteResponse
 
 from restmcp.exceptions import (
     ForbiddenError,
@@ -95,6 +96,19 @@ class Endpoint(ABC):
     # REST path before the callback; no-op when auth is disabled. On the MCP
     # side, hide sensitive tools structurally with expose = "rest".
     required_scope: str | None = None
+    # HTTP status of the SUCCESS envelope (issue #18). Declarative on purpose:
+    # the same value feeds the JSONResponse and the OpenAPI document, so the
+    # frozen contract cannot disagree with the server. 2xx only; 204 is
+    # rejected (No Content forbids a body, the envelope always has one).
+    # Errors ignore this — their code comes from the exception class.
+    success_code: int = 200
+    # FastAPI escape hatch (issue #18): the callback returns a Starlette
+    # Response and it passes through VERBATIM — no envelope, any status,
+    # headers, files, redirects. Three locks: requires expose="rest" (a raw
+    # response has no MCP representation), is opt-in (a Response returned
+    # without this flag is a programming error, never a silent passthrough),
+    # and covers success only — raised exceptions still use the error envelope.
+    raw_response: bool = False
     _registered: bool = False  # per-subclass; set after successful registration
 
     def __init_subclass__(cls, **kwargs):
@@ -110,6 +124,35 @@ class Endpoint(ABC):
                 f"{cls.__name__}: expose must be one of {list(cls._EXPOSE_VALUES)} "
                 f"(got: {expose!r})."
             )
+
+        raw = vars(cls).get("raw_response", cls.raw_response)
+        if raw:
+            if expose != "rest":
+                raise TypeError(
+                    f"{cls.__name__}: raw_response=True requires expose='rest' "
+                    f"(got expose={expose!r}). A raw HTTP response has no MCP "
+                    f"representation — hide the endpoint from MCP first."
+                )
+            if "success_code" in vars(cls):
+                raise TypeError(
+                    f"{cls.__name__}: success_code conflicts with raw_response=True "
+                    f"— in raw mode the Response object owns the status code."
+                )
+        else:
+            code = vars(cls).get("success_code", cls.success_code)
+            if not isinstance(code, int) or isinstance(code, bool) \
+                    or not 200 <= code <= 299:
+                raise TypeError(
+                    f"{cls.__name__}: success_code must be an int in 200..299 "
+                    f"(got: {code!r}). Error codes come from exception classes "
+                    f"(RestMCPException.status_code), not from here."
+                )
+            if code == 204:
+                raise TypeError(
+                    f"{cls.__name__}: success_code=204 is illegal — 204 No Content "
+                    f"forbids a body and the {{tool, result, success}} envelope "
+                    f"always has one."
+                )
 
         if getattr(cls, "disabled", False):
             return
@@ -199,11 +242,26 @@ class Endpoint(ABC):
             # per-request recursive copy of every container.
             result = await run_callback(self.callback, **dict(model))
 
+            if isinstance(result, StarletteResponse):
+                if not self.raw_response:
+                    raise TypeError(
+                        f"{type(self).__name__}: callback returned a Response "
+                        f"but the endpoint does not declare raw_response=True. "
+                        f"Declare it (requires expose='rest') or return plain data."
+                    )
+                return result
+            if self.raw_response:
+                raise TypeError(
+                    f"{type(self).__name__}: raw_response=True requires the "
+                    f"callback to return a starlette Response "
+                    f"(got: {type(result).__name__})."
+                )
+
             return JSONResponse(jsonable_encoder({
                 "tool": self.mcp_definition["name"],
                 "result": result,
                 "success": True,
-            }))
+            }), status_code=self.success_code)
 
         except RestMCPException as e:
             return JSONResponse(jsonable_encoder({
@@ -347,8 +405,24 @@ class Endpoint(ABC):
                     dependencies=[Depends(_auth_dependency)],
                     operation_id=self.mcp_definition["name"],
                     description=self.mcp_definition.get("description"),
-                    openapi_extra=_openapi_extra(self.mcp_definition, self.method),
+                    # status_code: FastAPI SEMPRE injeta um bloco de sucesso
+                    # próprio no OpenAPI; declarar o código faz esse bloco cair
+                    # na MESMA chave que o nosso openapi_extra sobrescreve —
+                    # sem isto, um success_code=202 sairia com um "200:
+                    # Successful Response" fantasma ao lado.
+                    status_code=self.success_code,
+                    openapi_extra=_openapi_extra(
+                        self.mcp_definition, self.method,
+                        success_code=self.success_code, raw=self.raw_response),
                 )
+                if self.raw_response:
+                    # O bloco automático do FastAPI não tem como ser suprimido
+                    # por rota; a poda acontece no openapi() (rest.py), que lê
+                    # esta lista. Registrada DEPOIS do add_api_route: rota que
+                    # falhou não entra.
+                    server.app.state.raw_routes = getattr(
+                        server.app.state, "raw_routes", set())
+                    server.app.state.raw_routes.add((self.url, self.method.lower()))
             except Exception:
                 server.unregister_url_handler(self)
                 raise
@@ -370,14 +444,17 @@ _ERROR_ENVELOPE = {
 }
 
 
-def _openapi_extra(mcp_definition: dict, method: str) -> dict:
+def _openapi_extra(mcp_definition: dict, method: str, *,
+                   success_code: int = 200, raw: bool = False) -> dict:
     """Request AND response metadata for a route (issue #52 parts A and B)."""
     extra = _openapi_params(mcp_definition, method) or {}
-    extra["responses"] = _openapi_responses(mcp_definition)
+    extra["responses"] = _openapi_responses(
+        mcp_definition, success_code=success_code, raw=raw)
     return extra
 
 
-def _openapi_responses(mcp_definition: dict) -> dict:
+def _openapi_responses(mcp_definition: dict, *,
+                       success_code: int = 200, raw: bool = False) -> dict:
     """Document what a route actually sends back.
 
     Every success travels in the ``{tool, result, success}`` envelope, so the
@@ -389,6 +466,21 @@ def _openapi_responses(mcp_definition: dict) -> dict:
     ``default``. This is part B of ReconcilIA issue #52 — before it, a renamed
     response field compiled fine on the client and simply showed empty data.
     """
+    if raw:
+        # Raw endpoint (issue #18): no envelope to promise — the endpoint owns
+        # code, headers and body. One honest "default" instead of a "200" that
+        # would lie about both the code and the shape. Errors raised as
+        # exceptions still use the error envelope, and the description says so.
+        return {
+            "default": {
+                "description": (
+                    "Resposta crua (raw_response=True): código, headers e corpo "
+                    "definidos pelo endpoint. Erros levantados por exceção usam "
+                    "o envelope de erro padrão {tool, error, success, error_type}."
+                ),
+            },
+        }
+
     result_schema = mcp_definition.get("returns") or {}
     success_envelope = {
         "type": "object",
@@ -400,7 +492,7 @@ def _openapi_responses(mcp_definition: dict) -> dict:
         "required": ["tool", "result", "success"],
     }
     return {
-        "200": {
+        str(success_code): {
             "description": "Envelope de sucesso",
             "content": {"application/json": {"schema": success_envelope}},
         },

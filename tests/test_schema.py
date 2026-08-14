@@ -1,4 +1,12 @@
-from restmcp.schema import tool_name_from_class
+import inspect
+from typing import Annotated, Optional
+
+from restmcp.schema import (
+    build_mcp_definition,
+    build_parameters,
+    schema_for_annotation,
+    tool_name_from_class,
+)
 
 
 class GetDeviceEndpoint:
@@ -22,8 +30,6 @@ def test_tool_name_prefers_explicit_name_attribute():
     assert tool_name_from_class(HTTPProxyEndpoint) == "custom_name"
 
 
-import inspect
-from restmcp.schema import schema_for_annotation
 
 
 def test_schema_for_primitives():
@@ -52,8 +58,6 @@ def test_schema_for_missing_annotation_defaults_to_string():
     assert schema_for_annotation(inspect.Parameter.empty) == {"type": "string"}
 
 
-from typing import Annotated, Optional
-from restmcp.schema import build_parameters
 
 
 def test_build_parameters_reads_types_descriptions_and_defaults():
@@ -98,7 +102,6 @@ def test_build_parameters_unwraps_pep604_union():
     assert props["count"] == {"type": "integer", "default": None}
 
 
-from restmcp.schema import build_mcp_definition
 
 
 def test_build_mcp_definition_uses_docstring_and_signature():
@@ -158,7 +161,7 @@ def test_annotated_wrapping_optional_still_works():
 
 
 def test_python_type_for_primitives():
-    from typing import Annotated, get_origin, get_args
+    from typing import get_args
     from restmcp.schema import python_type_for
 
     assert python_type_for({"type": "string"}) is str
@@ -171,7 +174,7 @@ def test_python_type_for_primitives():
 
 
 def test_python_type_for_array_and_object():
-    from typing import List, Dict, Any, get_origin, get_args
+    from typing import get_origin, get_args
     from restmcp.schema import python_type_for
 
     arr = python_type_for({"type": "array", "items": {"type": "string"}})

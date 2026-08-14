@@ -306,6 +306,8 @@ Rules:
 - Must declare `url`, `method`, and `callback`.
 - `mcp_definition` is inferred from the `callback` when not provided explicitly.
 - `expose` selects the transport: `"rest"`, `"mcp"` or `"both"` (default) — see 11.8.
+- `success_code` declares the HTTP code of the success envelope (default 200) — see 11.10.
+- `raw_response` opens the FastAPI escape hatch on REST-only endpoints — see 11.11.
 
 ```python
 from typing import Annotated
@@ -491,6 +493,59 @@ the MCP side publishes — REST and OpenAPI cannot drift:
 Generated clients (`openapi-typescript`, `openapi-python-client`) therefore get
 full request/response types: a renamed response field becomes a codegen diff
 instead of silently empty client data.
+
+### 11.10 Success status code (`success_code`) — 0.6.0+
+
+The HTTP code of the success envelope is a class-level declaration, in the
+same idiom as `expose`/`max_body_bytes`/`required_scope`:
+
+```python
+class StartRunEndpoint(Endpoint):
+    success_code = 202     # default 200; nothing changes for existing endpoints
+```
+
+- One declaration feeds BOTH the `JSONResponse` and the OpenAPI document
+  (`"202"` replaces the `"200"` key), so a frozen contract cannot disagree
+  with the server.
+- Validated at class definition: int in 200..299; **204 is rejected** (No
+  Content forbids a body; the `{tool, result, success}` envelope always has
+  one).
+- Errors ignore it — their code comes from the exception class. The complete
+  rule of thumb: **error code = exception type, success code = endpoint
+  declaration.**
+- MCP is unaffected: HTTP status codes do not exist on that transport, so any
+  `expose` mode may declare a custom code.
+
+### 11.11 Raw responses (`raw_response`) — 0.6.0+
+
+The FastAPI escape hatch for responses that do not fit the envelope — file
+downloads, redirects, conditional codes, custom headers. Three locks:
+
+```python
+class ExportCsvEndpoint(Endpoint):
+    expose = "rest"        # lock 1: REQUIRED — raw has no MCP representation
+    raw_response = True    # lock 2: opt-in declared, never inferred
+    ...
+    def callback(self, device_id):
+        return PlainTextResponse(csv, media_type="text/csv",
+                                 headers={"content-disposition": "attachment"})
+```
+
+1. `raw_response=True` with `expose="both"`/`"mcp"` raises at class definition.
+   Combining it with an explicit `success_code` also raises — in raw mode the
+   `Response` object owns the status.
+2. A callback returning a Starlette `Response` WITHOUT the flag is a
+   programming error (500 with a pointed message in the log); declared raw but
+   returning plain data errors symmetrically. No silent dual mode.
+3. Success only: exceptions raised in a raw endpoint still produce the
+   standard error envelope with the exception's `status_code` — clients keep
+   one error format. The request-side pipeline (auth, scopes, body limit,
+   parameter validation from `mcp_definition`) applies unchanged.
+
+OpenAPI: a raw operation documents a single honest `default` ("code, headers
+and body defined by the endpoint; errors use the standard error envelope") —
+FastAPI's automatic success block is pruned for these routes by the
+`openapi()` override installed in `RestApp`.
 
 ---
 
