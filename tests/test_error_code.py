@@ -153,3 +153,85 @@ def test_app_handler_renders_restmcp_exception_outside_callback(monkeypatch):
     assert r.status_code == 503
     assert r.json() == {"tool": None, "error": "manutenção", "success": False,
                         "error_type": "RestMCPException", "code": "maintenance"}
+
+
+# --- subclasses written for 0.6.x (no super().__init__) keep working --------
+# 0.6.1 read only ``message`` and ``status_code`` (REST) and nothing at all over
+# MCP (fastmcp rendered the exception). The envelope now also reads ``code``;
+# a subclass that never called RestMCPException.__init__ must not turn into a
+# bare 500 because of it.
+
+class LegacyTeapot(RestMCPException):
+    def __init__(self, message):
+        Exception.__init__(self, message)
+        self.message = message
+        self.status_code = 418
+
+
+class LegacyBare(RestMCPException):
+    """Sets nothing restmcp-specific: 0.6.1 served it over MCP unchanged."""
+
+    def __init__(self, message):
+        Exception.__init__(self, message)
+
+
+def _mcp_result(tool):
+    import json
+
+    app = Server.get_instance().asgi_app(mcp_path="/mcp-protocol")
+    h = {"Accept": "application/json, text/event-stream"}
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "t", "version": "1"}}}
+    with TestClient(app) as c:
+        r = c.post("/mcp-protocol/", json=init, headers=h)
+        h = {**h, "mcp-session-id": r.headers["mcp-session-id"]}
+        c.post("/mcp-protocol/", headers=h,
+               json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        r = c.post("/mcp-protocol/", headers=h, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": tool, "arguments": {}}})
+    data = [l for l in r.text.splitlines() if l.startswith("data:")]
+    return json.loads(data[-1][len("data:"):])["result"]
+
+
+def test_legacy_subclass_without_super_init_over_rest(monkeypatch):
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    _failing_endpoint(LegacyTeapot("teapot"))
+    with TestClient(Server.get_instance().app) as c:
+        r = c.post("/api/falha", json={})
+    assert r.status_code == 418
+    assert r.json() == {"tool": "falha", "error": "teapot", "success": False,
+                        "error_type": "LegacyTeapot", "code": None}
+
+
+def test_legacy_subclass_without_super_init_over_mcp(monkeypatch):
+    import pytest
+
+    pytest.importorskip("fastmcp")
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    _failing_endpoint(LegacyTeapot("teapot"))
+    result = _mcp_result("falha")
+    assert result["isError"] is True
+    assert result["structuredContent"] == {
+        "tool": "falha", "error": "teapot", "success": False,
+        "error_type": "LegacyTeapot", "code": None}
+
+
+def test_bare_subclass_over_mcp_and_rest(monkeypatch):
+    """Neither message, status_code nor code set: the text falls back to
+    str(exc), the status to 500 — still the envelope, never a bare 500."""
+    import pytest
+
+    pytest.importorskip("fastmcp")
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    _failing_endpoint(LegacyBare("sem detalhes"))
+    expected = {"tool": "falha", "error": "sem detalhes", "success": False,
+                "error_type": "LegacyBare", "code": None}
+    result = _mcp_result("falha")
+    assert result["isError"] is True
+    assert result["structuredContent"] == expected
+    with TestClient(Server.get_instance().app) as c:
+        r = c.post("/api/falha", json={})
+    assert r.status_code == 500
+    assert r.json() == expected

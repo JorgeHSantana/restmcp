@@ -437,7 +437,7 @@ def error_envelope(exc: RestMCPException, tool: str | None) -> dict:
     """
     return {
         "tool": tool,
-        "error": exc.message,
+        "error": exc.message if exc.message is not None else str(exc),
         "success": False,
         "error_type": exc.__class__.__name__,
         "code": exc.code,

@@ -205,3 +205,56 @@ def test_auth_enabled_without_principal_is_forbidden_in_memory(monkeypatch):
     assert result.is_error is True
     assert result.structured_content["code"] == "forbidden_scope"
     assert calls["n"] == 0
+
+
+# --- the per-request principal wins over a contextvar set elsewhere --------
+# On fastmcp 3.x (mcp 1.x) the session's server loop runs in a task spawned by
+# the request that OPENED the session, so current_auth there is that request's
+# principal. The scope check must read the principal of the HTTP request making
+# the tools/call, and fail closed when that request carries none.
+
+def test_http_request_without_principal_is_forbidden_despite_contextvar(monkeypatch):
+    """A tools/call whose HTTP request carries no principal (no
+    scope["state"]["auth"]) is refused even when current_auth holds a write
+    principal: the contextvar is only trusted when there is no HTTP request."""
+    pytest.importorskip("fastmcp")
+    from restmcp.auth import current_auth
+
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    _register(sync=True)
+    inner = Server.get_instance().asgi_app(mcp_path="/mcp-protocol")  # no AuthMiddleware
+    monkeypatch.setenv("AUTH_API_KEY", _KEYS)
+    write = {"name": "campo", "scopes": frozenset({"read", "write"})}
+
+    async def app(scope, receive, send):
+        if scope["type"] == "http":
+            current_auth.set(write)
+        await inner(scope, receive, send)
+
+    with TestClient(app) as c:
+        h = _session(c, None)
+        result = _call_tool(c, h, "dangerous")
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "forbidden_scope"
+    assert calls["n"] == 0
+
+
+def test_in_memory_uses_current_auth(monkeypatch):
+    """No HTTP request (in-memory transport): current_auth is the source."""
+    fastmcp = pytest.importorskip("fastmcp")
+    import asyncio
+
+    from restmcp.auth import current_auth
+
+    monkeypatch.setenv("AUTH_API_KEY", _KEYS)
+    _register(sync=True)
+    server = Server.get_instance().get_mcp()
+
+    async def go():
+        current_auth.set({"name": "campo", "scopes": frozenset({"read", "write"})})
+        async with fastmcp.Client(server) as client:
+            return await client.call_tool("dangerous", {}, raise_on_error=False)
+
+    result = asyncio.run(go())
+    assert not result.is_error
+    assert calls["n"] == 1

@@ -33,6 +33,15 @@ an application lifespan hook for `asgi_app()`.
   its traceback and returned as the generic `InternalServerError` envelope
   (`"error": "Internal server error"`), as REST already did. fastmcp echoed
   `str(e)` before (its `mask_error_details` defaults to `False`).
+- **MCP error text for a `RestMCPException` lost fastmcp's prefix**: the text
+  content is now the exception message alone (`"no such thing"`), where
+  fastmcp rendered `"Error calling tool 'gone': no such thing"`; the same
+  applies to the `ToolError` message raised by `fastmcp.Client.call_tool`.
+  Clients matching on the prefix must match the message or, better, read
+  `structuredContent.code`.
+- **Dependency floor raised to `fastmcp>=3.4`** (was `fastmcp>=2.0`): fastmcp
+  2.x already failed the test suite before this release, and 3.0–3.3 lack the
+  `ToolResult(is_error=...)` the structured MCP errors need.
 
 ### Added
 - `asgi_app(lifespan=...)`: the application's startup/shutdown hook (open and
@@ -46,7 +55,10 @@ an application lifespan hook for `asgi_app()`.
 - `code` in `RestMCPException` (`RestMCPException(message, status_code, code=None)`;
   the built-in subclasses accept it too, without changing their status): a
   machine-readable identifier (e.g. `"session_expired"`) clients can branch on
-  without parsing the message.
+  without parsing the message. Subclasses written for 0.6.x that do not call
+  `RestMCPException.__init__` keep their status and envelope: `message`,
+  `status_code` and `code` have class-level defaults (`None` → `str(exc)`,
+  `500`, `None`).
 - One error envelope, `{tool, error, success, error_type, code}`, shared by the
   REST callback, the auth middleware, the REST auth dependency and MCP. `code`
   is **always present**, `null` when the exception defines none; `tool` is
@@ -66,11 +78,17 @@ an application lifespan hook for `asgi_app()`.
 ### Fixed
 - `required_scope` was not enforced on MCP `tools/call`: a `read` key could
   run a `write` tool through MCP. The scope is now checked before the callback
-  on both transports, against the principal of each HTTP request (a session
-  opened by one key does not lend its scopes to calls made with another), and
-  fails closed when auth is configured but no principal is in context (e.g.
-  fastmcp's in-memory transport). `expose = "rest"` is no longer needed as a
-  workaround. Over MCP, fastmcp validates the arguments before the tool runs,
+  on both transports, against the principal of the HTTP request making the
+  `tools/call` (`scope["state"]["auth"]`, read through fastmcp's per-request
+  `get_http_request()`), so a session opened by one key does not lend its
+  scopes to calls made with another — verified on fastmcp 3.4.11 (where the
+  session task otherwise carries the opener's `current_auth`) and 4.2.1,
+  Streamable HTTP and SSE. During the call `current_auth` is set to that same
+  principal, so callbacks reading it see the calling key. It fails closed:
+  an HTTP request without a principal is refused whatever `current_auth`
+  says, and without an HTTP request (fastmcp's in-memory transport)
+  `current_auth` is the source and unset means refused. `expose = "rest"` is
+  no longer needed as a workaround. Over MCP, fastmcp validates the arguments before the tool runs,
   so invalid arguments from a key without the scope get a validation error
   rather than `forbidden_scope`; REST checks the scope first. The callback
   runs in neither case.
@@ -83,8 +101,9 @@ an application lifespan hook for `asgi_app()`.
   The deadline is the ASGI server's / proxy's (e.g. Cloud Run
   `timeoutSeconds`); clients must raise their own timeouts (README →
   Production checklist).
-- The test suite for this release runs against fastmcp 4.2.1; older fastmcp
-  majors (still allowed by `fastmcp>=2.0`) are not exercised by it.
+- The test suite for this release passes on fastmcp 4.2.1 (mcp 2.3.0),
+  3.4.11 and 3.4.0 (mcp 1.30.0), Python 3.14; it fails on fastmcp 3.0–3.3,
+  hence the `fastmcp>=3.4` floor.
 
 ## [0.6.1] - 2026-09-08
 

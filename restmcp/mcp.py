@@ -84,11 +84,16 @@ class McpApp:
             )
 
         async def tool_wrapper(**kwargs):
+            # The principal of THIS tools/call (see _call_principal), published
+            # in current_auth for the duration of the call so callbacks reading
+            # it see the calling key, then restored.
+            token = None
             try:
-                # Same authorization as REST: AuthMiddleware set current_auth
-                # in this request task; required_scope is checked before the
-                # callback runs (no-op when auth is disabled).
-                handler._enforce_scope(current_auth.get())
+                principal = _call_principal(current_auth)
+                token = current_auth.set(principal)
+                # Same authorization as REST: required_scope is checked before
+                # the callback runs (no-op when auth is disabled).
+                handler._enforce_scope(principal)
                 # Same sync/async contract as REST: async callbacks are awaited,
                 # sync callbacks run in a threadpool (see run_callback).
                 return await run_callback(handler.callback, **kwargs)
@@ -104,6 +109,9 @@ class McpApp:
                 # mask_error_details defaults to False).
                 _logger.error("Unhandled error in tool %r", name, exc_info=True)
                 return error_result(internal_error_envelope(name))
+            finally:
+                if token is not None:
+                    current_auth.reset(token)
 
         tool_wrapper.__name__ = name
         tool_wrapper.__doc__ = description
@@ -113,6 +121,32 @@ class McpApp:
         # so no outputSchema is derived and error envelopes cannot violate one.
         tool_wrapper.__annotations__ = {**annotations, "return": dict}
         return tool_wrapper
+
+
+def _call_principal(current_auth: Any) -> dict | None:
+    """Principal of the request making this tools/call.
+
+    Over HTTP it is the one AuthMiddleware published in the scope of that HTTP
+    request (``scope["state"]["auth"]``), read through fastmcp's per-request
+    ``get_http_request()``. The ``current_auth`` contextvar is NOT trusted
+    there: on fastmcp 3.x (mcp 1.x) the session's server loop runs in a task
+    spawned by the request that OPENED the session, so the contextvar holds
+    that request's principal — a key reusing another key's ``mcp-session-id``
+    would borrow its scopes. An HTTP request without a principal yields
+    ``None`` (fail closed: a scoped tool is refused), whatever the contextvar
+    says.
+
+    Without an HTTP request (in-memory transport) ``current_auth`` is the only
+    source; unset means ``None``, which also fails closed.
+    """
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+    except RuntimeError:  # no active HTTP request
+        return current_auth.get()
+    state = request.scope.get("state") or {}
+    return state.get("auth")
 
 
 def _tool_result_types():

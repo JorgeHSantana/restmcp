@@ -105,7 +105,7 @@ Dependencies installed automatically:
 |---|---|---|
 | fastapi | >= 0.100 | REST layer (HTTP routes, validation, CORS). |
 | uvicorn[standard] | >= 0.20 | ASGI server to run the application. |
-| fastmcp | >= 2.0 | MCP protocol implementation. 0.7.0 is tested with fastmcp 4.2.1; older majors are not exercised by the test suite. |
+| fastmcp | >= 3.4 | MCP protocol implementation. 0.7.0's test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (3.0–3.3 and 2.x fail it). |
 | pydantic | >= 2.0 | Data models (Entity) and validation. |
 | click | >= 8.0 | CLI (`restmcp new`). |
 
@@ -584,7 +584,7 @@ Parameters of `asgi_app()`:
 | `mcp_path` | `/mcp-protocol` | Exact path where the MCP endpoint is served (MCP clients connect there). |
 | `transport` | `http` | MCP transport: `http` (Streamable HTTP, fastmcp 3.x default), `streamable-http` (fastmcp 2.x alias), or `sse`. |
 | `public_paths` | `("/health", "/mcp/tools")` | Routes exempt from authentication when `AUTH_API_KEY` is set. |
-| `lifespan` | `None` | Application startup/shutdown hook: a callable `lifespan(app)` (the parent Starlette app) returning an async context manager, e.g. an `@asynccontextmanager` function, to open/close HTTP clients or pools (store them in `app.state`). Chained to the FastMCP lifespan: FastMCP enters first and exits last; the app's lifespan runs inside it. An exception before the `yield` propagates (not wrapped in an `ExceptionGroup`) and the server does not start. `None` keeps FastMCP's lifespan alone. |
+| `lifespan` | `None` | Application startup/shutdown hook: a callable `lifespan(app)` (the parent Starlette app) returning an async context manager, e.g. an `@asynccontextmanager` function, to open/close HTTP clients or pools (store them in a class attribute or module-level variable your DataSources read: the `app` it receives is the parent Starlette app, whose `app.state` callbacks cannot reach). Chained to the FastMCP lifespan: FastMCP enters first and exits last; the app's lifespan runs inside it. An exception before the `yield` propagates (not wrapped in an `ExceptionGroup`) and the server does not start. `None` keeps FastMCP's lifespan alone. |
 
 `asgi_app()` is idempotent: `get_mcp()` memoizes the FastMCP instance, so calling it more than once reuses the same MCP server.
 
@@ -632,8 +632,10 @@ matched principal `{"name", "scopes"}` is published as `request.state.auth` and
 via the `restmcp.auth.current_auth` contextvar — visible in sync callbacks
 (run_callback copies the context into the worker thread). This holds on BOTH
 transports: over REST and over an MCP `tools/call` served by `asgi_app()`
-(FastMCP runs the tool inside the request task, where `AuthMiddleware` set the
-contextvar) — pinned by `tests/test_auth_mcp_identity.py` and shown in
+(since 0.7.0 the tool wrapper sets the contextvar, for the duration of the
+call, to the principal `AuthMiddleware` published on the HTTP request making the
+`tools/call` — per request, not per MCP session, so reusing another key's
+`mcp-session-id` neither lends nor caps scopes) — pinned by `tests/test_auth_mcp_identity.py` and shown in
 `examples/telemetry/endpoints/whoami.py`. An `Endpoint` may
 declare `required_scope = "write"` (0.5.0+; enforced on MCP since 0.7.0):
 enforced before the callback on BOTH transports — REST returns 403, an MCP `tools/call` returns
@@ -689,7 +691,7 @@ raise NotFoundError("Product not found")          # HTTP 404
 raise ValidationError("token expired", code="session_expired")  # HTTP 400, "code" in the envelope (0.7.0+)
 ```
 
-Since 0.7.0 every `RestMCPException` (and subclass) accepts an optional `code`: a machine-readable identifier that travels as `code` in the error envelope (`null` when not set), on REST and as the `structuredContent` of an MCP `isError` result.
+Since 0.7.0 every `RestMCPException` (and subclass) accepts an optional `code`: a machine-readable identifier that travels as `code` in the error envelope (`null` when not set), on REST and as the `structuredContent` of an MCP `isError` result. `RestMCPException`, `UnauthorizedError` and `ForbiddenError` are imported from `restmcp.exceptions` (they are not re-exported by `restmcp`): `from restmcp.exceptions import RestMCPException` then `raise RestMCPException("upstream session expired", 503, code="session_expired")`.
 
 ---
 
@@ -945,7 +947,7 @@ The `Service` accepts the `repo=...` override; the `Repository` accepts the `dat
 - **Typed parameters:** a `{"type": "string", "format": "date-time"}` parameter arrives as a string; convert it to datetime.
 - **Caching:** wrap expensive Service methods with `@cached_method(ttl=seconds, maxsize=128)`. The key comes from the arguments (via repr), so it works with list/dict arguments. The store is bounded and self-purging. Cache plain data, not rich objects.
 - **Folders vs suffixes:** only class suffixes are mandatory; folder names are free.
-- **Dependencies:** 0.7.0 is tested with `fastmcp` 4.2.1. The package still declares `fastmcp>=2.0`, but older fastmcp majors are not exercised by the test suite.
+- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it).
 
 ---
 

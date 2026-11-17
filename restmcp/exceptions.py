@@ -6,6 +6,14 @@ class RestMCPException(Exception):
     error envelope as ``code`` and is ``None`` when the raiser does not set it.
     """
 
+    # Class-level defaults for subclasses written for 0.6.x that never call
+    # RestMCPException.__init__: the envelope reads all three, and such a
+    # subclass must keep its own status/envelope instead of an AttributeError
+    # turning it into a bare 500. ``message`` None means "use str(exc)".
+    message: str | None = None
+    status_code: int = 500
+    code: str | None = None
+
     def __init__(self, message: str, status_code: int = 500, code: str | None = None):
         self.message = message
         self.status_code = status_code

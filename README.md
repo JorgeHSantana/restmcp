@@ -436,17 +436,29 @@ mcp = Server.get_instance().get_mcp()
 - **Running REST + MCP together:** use `app = server.asgi_app()` — it mounts both and wires the FastMCP lifespan. **Do not** call `server.app.mount(...)` directly: it raises "Task group is not initialized" on the first MCP request. MCP is served at the `mcp_path` you pass (default `/mcp-protocol/`, trailing slash); REST stays at `/`.
 - **Opening and closing resources (HTTP clients, pools):** pass `lifespan=` to `asgi_app()` — a callable taking the parent Starlette app and returning an async context manager. It is chained to the FastMCP lifespan (FastMCP starts first and stops last), so MCP keeps working; an exception before the `yield` propagates and the server does not come up.
 
+  Keep the resource where your code can reach it — a class attribute or module-level variable. The `app` passed to the lifespan is the parent Starlette app; callbacks receive no request, so they cannot reach its `app.state`.
+
   ```python
   from contextlib import asynccontextmanager
   import httpx
+  from restmcp import DataSource, Server
+
+  class ProductApiDataSource(DataSource):
+      client: httpx.AsyncClient | None = None   # opened/closed by the lifespan below
+
+      async def fetch(self, product_id: str) -> dict:
+          r = await ProductApiDataSource.client.get(f"https://api.example.com/products/{product_id}")
+          r.raise_for_status()
+          return r.json()
 
   @asynccontextmanager
   async def lifespan(app):
-      app.state.http = httpx.AsyncClient(timeout=10)
+      ProductApiDataSource.client = httpx.AsyncClient(timeout=10)
       try:
           yield
       finally:
-          await app.state.http.aclose()
+          await ProductApiDataSource.client.aclose()
+          ProductApiDataSource.client = None
 
   app = Server.get_instance().asgi_app(lifespan=lifespan)
   ```
@@ -456,7 +468,7 @@ mcp = Server.get_instance().get_mcp()
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
 - **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
 - **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
-- **Dependencies:** 0.7.0 is tested with `fastmcp` 4.2.1. The package still declares `fastmcp>=2.0`, but older fastmcp majors are not exercised by the test suite. Installing fastmcp also pulls in `starlette`.
+- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it). Installing fastmcp also pulls in `starlette`.
 
 A complete, runnable server using all of the above lives in [examples/telemetry/](examples/telemetry/) — no database required.
 
@@ -472,6 +484,16 @@ from restmcp import ValidationError, NotFoundError
 raise ValidationError("product_id is required")  # → HTTP 400
 raise NotFoundError("Product not found")          # → HTTP 404
 raise ValidationError("token expired", code="session_expired")  # → 400, "code" in the envelope (0.7.0+)
+```
+
+The base class and the auth errors are imported from `restmcp.exceptions` (not
+re-exported by `restmcp`); use the base class for any other status with a `code`:
+
+```python
+from restmcp.exceptions import RestMCPException, UnauthorizedError, ForbiddenError
+
+raise RestMCPException("upstream session expired", 503, code="session_expired")  # → 503
+raise ForbiddenError("not your tenant", code="wrong_tenant")                       # → 403
 ```
 
 ```mermaid
