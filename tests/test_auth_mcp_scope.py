@@ -144,6 +144,9 @@ def test_rest_scope_unchanged(monkeypatch, sync):
 # key must not lend that key's scopes to calls made with another.
 
 def _with_key(headers, token):
+    # A real session must exist, or these tests would pass in a stateless mode
+    # without ever reusing one key's session with another key.
+    assert "mcp-session-id" in headers
     return {**headers, "Authorization": f"Bearer {token}"}
 
 
@@ -175,15 +178,30 @@ def test_auth_enabled_without_principal_is_forbidden_in_memory(monkeypatch):
     fastmcp = pytest.importorskip("fastmcp")
     import asyncio
 
+    from restmcp.auth import current_auth
+
     monkeypatch.setenv("AUTH_API_KEY", _KEYS)
     _register(sync=True)
     server = Server.get_instance().get_mcp()
 
+    # Record the principal the scope check actually sees: a principal leaked
+    # into the context (e.g. by an earlier test) must not make this pass.
+    seen = []
+    original = Endpoint._enforce_scope
+
+    def spy(self, principal):
+        seen.append(principal)
+        return original(self, principal)
+
+    monkeypatch.setattr(Endpoint, "_enforce_scope", spy)
+
     async def go():
+        assert current_auth.get() is None
         async with fastmcp.Client(server) as client:
             return await client.call_tool("dangerous", {}, raise_on_error=False)
 
     result = asyncio.run(go())
+    assert seen == [None]
     assert result.is_error is True
     assert result.structured_content["code"] == "forbidden_scope"
     assert calls["n"] == 0

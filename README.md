@@ -385,8 +385,13 @@ blocking calls inside an `async def` callback.
 ```
 
 ```json
-{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
+{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false, "code": null }
 ```
+
+`code` (0.7.0+) is always present: the exception's machine-readable `code`, or
+`null` when it defines none. `tool` is `null` when the error happens before an
+endpoint is resolved (e.g. the 401 from auth, which carries
+`code: "invalid_api_key"`).
 
 ---
 
@@ -451,7 +456,7 @@ mcp = Server.get_instance().get_mcp()
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
 - **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
 - **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
-- **Dependencies:** `fastmcp` 3.x is recommended (this package requires `fastmcp>=2.0`; upgrade to 3.x for full Streamable HTTP support). Installing fastmcp also pulls in `starlette`.
+- **Dependencies:** 0.7.0 is tested with `fastmcp` 4.2.1. The package still declares `fastmcp>=2.0`, but older fastmcp majors are not exercised by the test suite. Installing fastmcp also pulls in `starlette`.
 
 A complete, runnable server using all of the above lives in [examples/telemetry/](examples/telemetry/) — no database required.
 
@@ -466,6 +471,7 @@ from restmcp import ValidationError, NotFoundError
 
 raise ValidationError("product_id is required")  # → HTTP 400
 raise NotFoundError("Product not found")          # → HTTP 404
+raise ValidationError("token expired", code="session_expired")  # → 400, "code" in the envelope (0.7.0+)
 ```
 
 ```mermaid
@@ -506,12 +512,18 @@ export AUTH_API_KEY="painel:sk_abc:read, campo:sk_def:read+write, sk_legacy"
 
 The matched principal `{"name", "scopes"}` is published as `request.state.auth`
 and via the `restmcp.auth.current_auth` contextvar (visible inside sync
-callbacks too). Declare `required_scope = "write"` on an `Endpoint` and a key
-that lacks it is refused before the callback on **both** transports (0.7.0+):
-REST answers `403`, an MCP `tools/call` answers `isError: true` with the same
-error envelope as `structuredContent` (`code: "forbidden_scope"`). `expose =
-"rest"` is no longer needed as a scope workaround — keep it for endpoints that
-make no sense as a tool. The secret itself never propagates.
+callbacks too). Declare `required_scope = "write"` on an `Endpoint` (0.5.0+;
+enforced on MCP since 0.7.0) and a key that lacks it is refused before the
+callback on **both** transports: REST answers `403`, an MCP `tools/call`
+answers `isError: true` with the same error envelope as `structuredContent`
+(`code: "forbidden_scope"`). `expose = "rest"` is no longer needed as a scope
+workaround — keep it for endpoints that make no sense as a tool. The secret
+itself never propagates.
+
+Order of checks: over MCP, fastmcp validates the arguments before the scope
+check, so a key without the scope that sends invalid arguments gets a
+validation error rather than `forbidden_scope` (the callback runs in neither
+case), while REST checks the scope first.
 
 Over MCP every `RestMCPException` becomes `isError: true` with the shared
 envelope (`tool, error, success, error_type, code`) as `structuredContent`;

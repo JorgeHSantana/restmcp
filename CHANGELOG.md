@@ -11,41 +11,69 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
+
+One error envelope for every transport, `required_scope` enforced on MCP, and
+an application lifespan hook for `asgi_app()`.
+
+### Changed (breaking)
+- **`required_scope` now holds on MCP `tools/call`**: a key without the scope
+  (e.g. a `read` key calling a `write` tool) used to reach the callback through
+  MCP; it now gets `isError: true` with `code: "forbidden_scope"` and the
+  callback does not run (see Fixed). Clients that relied on the gap must use a
+  key that carries the scope.
+- **The framework's 401 body changed shape**: `AuthMiddleware` (which also
+  guards the mounted MCP) answered `{"error": "Unauthorized"}` and the REST
+  auth dependency FastAPI's `{"detail": "Unauthorized"}`; both now answer the
+  standard error envelope
+  `{"tool": null, "error": "Unauthorized", "success": false, "error_type": "UnauthorizedError", "code": "invalid_api_key"}`.
+  Clients that read `detail` or a bare `error` key must read the envelope.
+- **Unexpected MCP errors no longer carry the exception text**: an exception
+  that is neither a `RestMCPException` nor one of fastmcp's own is logged with
+  its traceback and returned as the generic `InternalServerError` envelope
+  (`"error": "Internal server error"`), as REST already did. fastmcp echoed
+  `str(e)` before (its `mask_error_details` defaults to `False`).
+
 ### Added
 - `asgi_app(lifespan=...)`: the application's startup/shutdown hook (open and
   close HTTP clients, pools). A callable taking the parent Starlette app and
   returning an async context manager; it is chained to the FastMCP lifespan —
   FastMCP enters first and exits last — so MCP keeps working. An exception in
   the app's startup propagates as itself (not wrapped in an `ExceptionGroup`)
-  and the server does not come up. Default `None`: unchanged behavior.
+  and the server does not come up; if FastMCP's shutdown then fails too, its
+  exception propagates with the app's attached as a note. Default `None`:
+  unchanged behavior.
 - `code` in `RestMCPException` (`RestMCPException(message, status_code, code=None)`;
   the built-in subclasses accept it too, without changing their status): a
   machine-readable identifier (e.g. `"session_expired"`) clients can branch on
-  without parsing the message. It travels in the REST error envelope —
-  `{tool, error, success, error_type, code}` — **always present**, `null` when
-  the exception defines none, and the OpenAPI error schema (`default`) declares
-  it (`["string", "null"]`, required).
+  without parsing the message.
+- One error envelope, `{tool, error, success, error_type, code}`, shared by the
+  REST callback, the auth middleware, the REST auth dependency and MCP. `code`
+  is **always present**, `null` when the exception defines none; `tool` is
+  `null` when the error happens before an endpoint is resolved (the 401). The
+  OpenAPI error schema (`default`) declares `code` (`["string", "null"]`,
+  required) and now types `tool` as `["string", "null"]`. `RestApp` registers
+  a `RestMCPException` handler so exceptions raised outside the callback
+  (route dependencies) get the same envelope.
 - `UnauthorizedError` (401, `code="invalid_api_key"`, message `"Unauthorized"`).
-- The framework's 401 — from `AuthMiddleware` and from the REST auth
-  dependency alike — now uses the standard error envelope with
-  `code: "invalid_api_key"` (`tool: null`), instead of `{"error": ...}` and
-  FastAPI's `{"detail": ...}` respectively. `RestApp` registers a
-  `RestMCPException` handler so exceptions raised outside the callback get the
-  same envelope.
-- The `required_scope` 403 carries `code: "forbidden_scope"`.
-- Structured MCP errors: a `RestMCPException` raised in a tool becomes
-  `isError: true` with the shared error envelope (including `code`) as
+- The `required_scope` 403 carries `code: "forbidden_scope"`, on REST and MCP.
+- Structured MCP errors: a `RestMCPException` raised in a tool (or by the
+  scope check) becomes `isError: true` with the shared error envelope as
   `structuredContent` and the message as text content. fastmcp's own
   exceptions (`FastMCPError`, which covers `ToolError`, and the MCP SDK's
-  `MCPError`) keep fastmcp's handling. Any other exception
-  is logged and returned as the generic `InternalServerError` envelope — the
-  exception text no longer reaches MCP clients (fastmcp echoed it, since its
-  `mask_error_details` defaults to `False`), matching REST.
+  `MCPError`) pass through to fastmcp's handling untouched.
 
 ### Fixed
 - `required_scope` was not enforced on MCP `tools/call`: a `read` key could
   run a `write` tool through MCP. The scope is now checked before the callback
-  on both transports; `expose = "rest"` is no longer needed as a workaround.
+  on both transports, against the principal of each HTTP request (a session
+  opened by one key does not lend its scopes to calls made with another), and
+  fails closed when auth is configured but no principal is in context (e.g.
+  fastmcp's in-memory transport). `expose = "rest"` is no longer needed as a
+  workaround. Over MCP, fastmcp validates the arguments before the tool runs,
+  so invalid arguments from a key without the scope get a validation error
+  rather than `forbidden_scope`; REST checks the scope first. The callback
+  runs in neither case.
 
 ### Verified
 - Long calls: a 300 s callback (and a 330 s one) completes through REST and
@@ -55,6 +83,8 @@ this file move together — the publish workflow releases whatever version is in
   The deadline is the ASGI server's / proxy's (e.g. Cloud Run
   `timeoutSeconds`); clients must raise their own timeouts (README →
   Production checklist).
+- The test suite for this release runs against fastmcp 4.2.1; older fastmcp
+  majors (still allowed by `fastmcp>=2.0`) are not exercised by it.
 
 ## [0.6.1] - 2026-09-08
 
@@ -230,7 +260,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...v0.5.1
