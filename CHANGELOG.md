@@ -39,6 +39,13 @@ an application lifespan hook for `asgi_app()`.
   applies to the `ToolError` message raised by `fastmcp.Client.call_tool`.
   Clients matching on the prefix must match the message or, better, read
   `structuredContent.code`.
+- **Over MCP HTTP the principal comes from the request, not from
+  `current_auth`**: the scope check (and `current_auth` inside the callback)
+  uses the principal the framework's `AuthMiddleware` stored on the request
+  making the `tools/call`. A custom auth middleware that only sets the
+  `current_auth` contextvar is no longer seen over MCP HTTP: tools with
+  `required_scope` answer `forbidden_scope` and `current_auth.get()` is `None`
+  in the callback. REST and the in-memory transport are unaffected.
 - **Dependency floor raised to `fastmcp>=3.4`** (was `fastmcp>=2.0`): fastmcp
   2.x already failed the test suite before this release, and 3.0–3.3 lack the
   `ToolResult(is_error=...)` the structured MCP errors need.
