@@ -3,7 +3,10 @@ from typing import Annotated, Any, List
 
 from pydantic import Field
 
+from restmcp.logging import Logger
 from restmcp.schema import field_spec_for
+
+_logger = Logger("restmcp.mcp")
 
 
 class McpApp:
@@ -30,7 +33,6 @@ class McpApp:
         # cycle at module level.
         from restmcp.auth import current_auth
         from restmcp.endpoint import (
-            _logger,
             error_envelope,
             internal_error_envelope,
             run_callback,
@@ -38,6 +40,7 @@ class McpApp:
         from restmcp.exceptions import RestMCPException
 
         ToolResult, TextContent = _tool_result_types()
+        passthrough = _fastmcp_passthrough_errors()
 
         def_dict = handler.mcp_definition
         name = def_dict["name"]
@@ -91,6 +94,10 @@ class McpApp:
                 return await run_callback(handler.callback, **kwargs)
             except RestMCPException as e:
                 return error_result(error_envelope(e, name))
+            except passthrough:
+                # fastmcp's / the MCP SDK's own exceptions (ToolError raised on
+                # purpose, protocol errors) keep fastmcp's handling untouched.
+                raise
             except Exception:
                 # Same as REST: traceback to the log, generic text to the
                 # client. fastmcp would otherwise echo str(e) (its
@@ -118,3 +125,26 @@ def _tool_result_types():
     from mcp.types import TextContent
 
     return ToolResult, TextContent
+
+
+def _fastmcp_passthrough_errors() -> tuple:
+    """Exception types the tool wrapper re-raises untouched: fastmcp's
+    FastMCPError (covers ToolError) and the MCP SDK's MCPError. Imported
+    defensively — the SDK named it McpError before, and a class missing from
+    an older install must not break importing restmcp."""
+    types = []
+    try:
+        from fastmcp.exceptions import FastMCPError
+
+        types.append(FastMCPError)
+    except ImportError:
+        pass
+    try:
+        from mcp.shared import exceptions as _sdk
+    except ImportError:
+        _sdk = None
+    for attr in ("MCPError", "McpError"):
+        cls = getattr(_sdk, attr, None)
+        if isinstance(cls, type) and issubclass(cls, BaseException) and cls not in types:
+            types.append(cls)
+    return tuple(types)

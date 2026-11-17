@@ -124,3 +124,34 @@ def test_success_unchanged(mcp):
     result = _call(mcp, "fine")
     assert not result.get("isError")
     assert result["structuredContent"] == {"value": 42}
+
+
+def test_fastmcp_tool_error_passes_through(monkeypatch):
+    """A callback that raises fastmcp's ToolError on purpose keeps fastmcp's
+    own handling: the message reaches the client, it is not flattened into
+    the generic InternalServerError envelope."""
+    pytest.importorskip("fastmcp")
+    from fastmcp.exceptions import ToolError
+
+    class DeliberateEndpoint(Endpoint):
+        mcp_definition = {"name": "deliberate", "description": "x",
+                          "parameters": {"properties": {}}}
+        url = "/api/deliberate"
+        method = "GET"
+
+        def callback(self):
+            raise ToolError("mensagem deliberada")
+
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    app = Server.get_instance().asgi_app(mcp_path="/mcp-protocol")
+    with TestClient(app) as c:
+        r = c.post("/mcp-protocol/", json=_INIT, headers=_H)
+        sid = r.headers.get("mcp-session-id")
+        h = {**_H, **({"mcp-session-id": sid} if sid else {})}
+        c.post("/mcp-protocol/", headers=h,
+               json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        result = _rpc(c, h, "tools/call", {"name": "deliberate", "arguments": {}})
+    assert result["isError"] is True
+    assert "mensagem deliberada" in result["content"][0]["text"]
+    sc = result.get("structuredContent") or {}
+    assert sc.get("error_type") != "InternalServerError"

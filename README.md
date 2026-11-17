@@ -498,7 +498,8 @@ make no sense as a tool. The secret itself never propagates.
 
 Over MCP every `RestMCPException` becomes `isError: true` with the shared
 envelope (`tool, error, success, error_type, code`) as `structuredContent`;
-any other exception is logged and reaches the client as the generic
+fastmcp's own exceptions (e.g. a deliberate `ToolError`) keep fastmcp's
+handling; any other exception is logged and reaches the client as the generic
 `InternalServerError` envelope, exactly as on REST.
 
 ---

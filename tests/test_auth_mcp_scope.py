@@ -137,3 +137,53 @@ def test_rest_scope_unchanged(monkeypatch, sync):
     assert r.status_code == 403
     assert r.json()["code"] == "forbidden_scope"
     assert calls["n"] == 0
+
+
+# --- the principal is per REQUEST, not per MCP session ---------------------
+# AuthMiddleware authenticates every HTTP request; a session id minted by one
+# key must not lend that key's scopes to calls made with another.
+
+def _with_key(headers, token):
+    return {**headers, "Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize("sync", [True, False], ids=["sync", "async"])
+def test_session_opened_by_write_key_does_not_lend_scope(monkeypatch, sync):
+    with TestClient(_app(monkeypatch, sync)) as c:
+        h = _session(c, "sk_2")
+        result = _call_tool(c, _with_key(h, "sk_1"), "dangerous")
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "forbidden_scope"
+    assert calls["n"] == 0
+
+
+@pytest.mark.parametrize("sync", [True, False], ids=["sync", "async"])
+def test_session_opened_by_read_key_does_not_cap_scope(monkeypatch, sync):
+    with TestClient(_app(monkeypatch, sync)) as c:
+        h = _session(c, "sk_1")
+        result = _call_tool(c, _with_key(h, "sk_2"), "dangerous")
+    assert not result.get("isError")
+    assert calls["n"] == 1
+
+
+# --- fail closed: auth enabled but no principal in the context -------------
+
+def test_auth_enabled_without_principal_is_forbidden_in_memory(monkeypatch):
+    """No HTTP layer (fastmcp in-memory transport): AuthMiddleware never ran,
+    so current_auth is unset. With AUTH_API_KEY configured the scoped tool
+    must refuse, not run."""
+    fastmcp = pytest.importorskip("fastmcp")
+    import asyncio
+
+    monkeypatch.setenv("AUTH_API_KEY", _KEYS)
+    _register(sync=True)
+    server = Server.get_instance().get_mcp()
+
+    async def go():
+        async with fastmcp.Client(server) as client:
+            return await client.call_tool("dangerous", {}, raise_on_error=False)
+
+    result = asyncio.run(go())
+    assert result.is_error is True
+    assert result.structured_content["code"] == "forbidden_scope"
+    assert calls["n"] == 0

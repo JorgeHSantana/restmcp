@@ -636,8 +636,9 @@ transports (since 0.7.0) — REST returns 403, an MCP `tools/call` returns
 `isError: true` — both with the error envelope `error_type: ForbiddenError`,
 `code: "forbidden_scope"` (pinned by `tests/test_auth_mcp_scope.py`). Over MCP
 any `RestMCPException` maps to `isError` + the envelope as
-`structuredContent`; other exceptions map to the generic
-`InternalServerError` envelope, never the exception text. `expose = "rest"` is
+`structuredContent`; fastmcp's own exceptions (`FastMCPError`/`ToolError`,
+the SDK's `MCPError`) pass through to fastmcp untouched; anything else maps to
+the generic `InternalServerError` envelope, never the exception text. `expose = "rest"` is
 not a scope mitigation anymore. Original section:
 
 
