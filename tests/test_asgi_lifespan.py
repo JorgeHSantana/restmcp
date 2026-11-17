@@ -9,6 +9,7 @@ first and exits last; the app's lifespan runs inside it.
 import contextlib
 import json
 
+import anyio
 import pytest
 from starlette.testclient import TestClient
 
@@ -189,25 +190,71 @@ def test_app_shutdown_runs_even_if_fastmcp_shutdown_raises(monkeypatch):
     assert events == ["mcp-start", "start", "stop", "mcp-stop"]
 
 
-def test_app_shutdown_runs_even_if_request_handling_raised():
-    _register()
+def test_error_thrown_at_yield_reaches_app_and_propagates_bare():
+    """An exception thrown into the combined lifespan at `yield` is seen by the
+    app's lifespan, its shutdown runs, and the original exception propagates —
+    not wrapped in the ExceptionGroup of FastMCP's task group."""
+    seen = []
 
-    class BoomEndpoint(Endpoint):
-        mcp_definition = {"name": "boom", "description": "x",
-                          "parameters": {"properties": {}}}
-        url = "/mcp/tools/boom"
-        method = "POST"
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        seen.append("start")
+        try:
+            yield
+        except BaseException as exc:
+            seen.append(exc)
+            raise
+        finally:
+            seen.append("stop")
 
-        def callback(self):
-            raise ValueError("boom")
+    app = Server.get_instance().asgi_app(lifespan=lifespan)
+    boom = ZeroDivisionError("boom")
 
+    async def run():
+        async with app.router.lifespan_context(app):
+            raise boom
+
+    with pytest.raises(ZeroDivisionError) as info:
+        anyio.run(run)
+    assert info.value is boom
+    assert seen == ["start", boom, "stop"]
+
+
+def test_app_shutdown_error_propagates_bare_and_fastmcp_still_stops(monkeypatch):
+    server = Server.get_instance()
     events = []
-    app = Server.get_instance().asgi_app(lifespan=_recording_lifespan(events))
-    with pytest.raises(ZeroDivisionError):
-        with TestClient(app, raise_server_exceptions=False) as c:
-            c.post("/mcp/tools/boom", json={})
-            1 / 0   # the app's own code fails while the server is up
-    assert events == ["start", "stop"]
+    _wrap_fastmcp_lifespan(monkeypatch, server, events)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        events.append("start")
+        yield
+        events.append("stop")
+        raise RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        with TestClient(server.asgi_app(lifespan=lifespan)):
+            pass
+    assert events == ["mcp-start", "start", "stop", "mcp-stop"]
+
+
+def test_double_fault_keeps_fastmcp_error_and_notes_the_app_error(monkeypatch):
+    server = Server.get_instance()
+    events = []
+    _wrap_fastmcp_lifespan(monkeypatch, server, events, fail_on_exit=True)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        yield
+        raise RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="fastmcp shutdown failed") as info:
+        with TestClient(server.asgi_app(lifespan=lifespan)):
+            pass
+    notes = getattr(info.value, "__notes__", [])
+    assert any("app lifespan also failed" in n and "close failed" in n
+               for n in notes)
+    assert events == ["mcp-start", "mcp-stop"]
 
 
 def test_lifespan_receives_the_parent_app():

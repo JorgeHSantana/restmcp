@@ -13,17 +13,23 @@ def _chain_lifespans(outer, inner):
 
     FastMCP runs its session manager in an anyio task group, which would wrap
     the app's exception in an ExceptionGroup; hold it and re-raise it bare
-    once FastMCP has shut down cleanly.
+    once FastMCP has shut down cleanly. If FastMCP's exit then fails too, its
+    exception propagates with the app's attached as a note (not lost).
     """
     @contextlib.asynccontextmanager
     async def chained(app):
         app_error = None
-        async with outer(app):
-            try:
-                async with inner(app):
-                    yield
-            except Exception as exc:
-                app_error = exc
+        try:
+            async with outer(app):
+                try:
+                    async with inner(app):
+                        yield
+                except Exception as exc:
+                    app_error = exc
+        except BaseException as exc:
+            if app_error is not None and exc is not app_error:
+                exc.add_note(f"app lifespan also failed: {app_error!r}")
+            raise
         if app_error is not None:
             raise app_error
 
