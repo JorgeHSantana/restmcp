@@ -385,8 +385,13 @@ blocking calls inside an `async def` callback.
 ```
 
 ```json
-{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
+{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false, "code": null }
 ```
+
+`code` (0.7.0+) is always present: the exception's machine-readable `code`, or
+`null` when it defines none. `tool` is `null` when the error happens before an
+endpoint is resolved (e.g. the 401 from auth, which carries
+`code: "invalid_api_key"`).
 
 ---
 
@@ -429,12 +434,41 @@ mcp = Server.get_instance().get_mcp()
 ## Production checklist
 
 - **Running REST + MCP together:** use `app = server.asgi_app()` — it mounts both and wires the FastMCP lifespan. **Do not** call `server.app.mount(...)` directly: it raises "Task group is not initialized" on the first MCP request. MCP is served at the `mcp_path` you pass (default `/mcp-protocol/`, trailing slash); REST stays at `/`.
+- **Opening and closing resources (HTTP clients, pools):** pass `lifespan=` to `asgi_app()` — a callable taking the parent Starlette app and returning an async context manager. It is chained to the FastMCP lifespan (FastMCP starts first and stops last), so MCP keeps working; an exception before the `yield` propagates and the server does not come up.
+
+  Keep the resource where your code can reach it — a class attribute or module-level variable. The `app` passed to the lifespan is the parent Starlette app; callbacks receive no request, so they cannot reach its `app.state`.
+
+  ```python
+  from contextlib import asynccontextmanager
+  import httpx
+  from restmcp import DataSource, Server
+
+  class ProductApiDataSource(DataSource):
+      client: httpx.AsyncClient | None = None   # opened/closed by the lifespan below
+
+      async def fetch(self, product_id: str) -> dict:
+          r = await ProductApiDataSource.client.get(f"https://api.example.com/products/{product_id}")
+          r.raise_for_status()
+          return r.json()
+
+  @asynccontextmanager
+  async def lifespan(app):
+      ProductApiDataSource.client = httpx.AsyncClient(timeout=10)
+      try:
+          yield
+      finally:
+          await ProductApiDataSource.client.aclose()
+          ProductApiDataSource.client = None
+
+  app = Server.get_instance().asgi_app(lifespan=lifespan)
+  ```
+- **Long calls:** restmcp imposes no per-call deadline, on REST or MCP; the deadline belongs to the ASGI server / proxy in front (e.g. Cloud Run `timeoutSeconds`). Verified with 300 s and 330 s calls on both transports (fastmcp 4.2.1, uvicorn 0.54). Raise the **client's** timeout above your longest call — `httpx` defaults to 5 s (`httpx.AsyncClient(timeout=None)` or a large `read`); `fastmcp.Client(url, timeout=...)` for MCP. MCP results stream as SSE with a keep-alive ping every 15 s, so idle-read timeouts do not fire; a REST response is silent until the callback returns, so every idle timeout on the path (load balancer, reverse proxy) must exceed the call.
 - **Auth:** set `AUTH_API_KEY` (Bearer). `asgi_app()` protects REST **and** the mounted MCP; `/health` and `/mcp/tools` remain public. Multiple keys: comma-separated.
 - **Serialization:** callback return values are serialized with `jsonable_encoder` — `datetime` → ISO 8601, `Decimal` → string, Pydantic models → dict, automatically. Override per-entity via `serialize()`.
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
 - **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
 - **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
-- **Dependencies:** `fastmcp` 3.x is recommended (this package requires `fastmcp>=2.0`; upgrade to 3.x for full Streamable HTTP support). Installing fastmcp also pulls in `starlette`.
+- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it). Installing fastmcp also pulls in `starlette`.
 
 A complete, runnable server using all of the above lives in [examples/telemetry/](examples/telemetry/) — no database required.
 
@@ -449,6 +483,17 @@ from restmcp import ValidationError, NotFoundError
 
 raise ValidationError("product_id is required")  # → HTTP 400
 raise NotFoundError("Product not found")          # → HTTP 404
+raise ValidationError("token expired", code="session_expired")  # → 400, "code" in the envelope (0.7.0+)
+```
+
+The base class and the auth errors are imported from `restmcp.exceptions` (not
+re-exported by `restmcp`); use the base class for any other status with a `code`:
+
+```python
+from restmcp.exceptions import RestMCPException, UnauthorizedError, ForbiddenError
+
+raise RestMCPException("upstream session expired", 503, code="session_expired")  # → 503
+raise ForbiddenError("not your tenant", code="wrong_tenant")                       # → 403
 ```
 
 ```mermaid
@@ -489,10 +534,24 @@ export AUTH_API_KEY="painel:sk_abc:read, campo:sk_def:read+write, sk_legacy"
 
 The matched principal `{"name", "scopes"}` is published as `request.state.auth`
 and via the `restmcp.auth.current_auth` contextvar (visible inside sync
-callbacks too). Declare `required_scope = "write"` on an `Endpoint` to get a
-`403` before the callback when the key lacks it (REST path; on the MCP side,
-hide sensitive tools with `expose = "rest"`). The secret itself never
-propagates.
+callbacks too). Declare `required_scope = "write"` on an `Endpoint` (0.5.0+;
+enforced on MCP since 0.7.0) and a key that lacks it is refused before the
+callback on **both** transports: REST answers `403`, an MCP `tools/call`
+answers `isError: true` with the same error envelope as `structuredContent`
+(`code: "forbidden_scope"`). `expose = "rest"` is no longer needed as a scope
+workaround — keep it for endpoints that make no sense as a tool. The secret
+itself never propagates.
+
+Order of checks: over MCP, fastmcp validates the arguments before the scope
+check, so a key without the scope that sends invalid arguments gets a
+validation error rather than `forbidden_scope` (the callback runs in neither
+case), while REST checks the scope first.
+
+Over MCP every `RestMCPException` becomes `isError: true` with the shared
+envelope (`tool, error, success, error_type, code`) as `structuredContent`;
+fastmcp's own exceptions (e.g. a deliberate `ToolError`) keep fastmcp's
+handling; any other exception is logged and reaches the client as the generic
+`InternalServerError` envelope, exactly as on REST.
 
 ---
 

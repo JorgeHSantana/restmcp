@@ -2,9 +2,13 @@ import datetime as dt
 import os
 from typing import Any, List
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
+from restmcp.endpoint import error_envelope
+from restmcp.exceptions import RestMCPException, UnauthorizedError
 from restmcp.logging import Logger
 
 _rest_logger = Logger("restmcp.rest")
@@ -33,11 +37,16 @@ def _auth_dependency(request: Request):
     token = token_from_authorization(request.headers.get("Authorization") or "")
     principal = match_token(token) if token else None
     if principal is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise UnauthorizedError()
     # Starlette convention: request.state.auth; plus the contextvar, which
     # run_callback carries into sync callbacks (issues #15/#16).
     request.scope.setdefault("state", {})["auth"] = principal
     current_auth.set(principal)
+
+
+async def _restmcp_exception_handler(request: Request, exc: RestMCPException):
+    return JSONResponse(jsonable_encoder(error_envelope(exc, None)),
+                        status_code=exc.status_code)
 
 
 class RestApp:
@@ -45,6 +54,10 @@ class RestApp:
 
     def __init__(self):
         self.app = FastAPI()
+        # Route dependencies (the 401 of _auth_dependency) run OUTSIDE the
+        # try in Endpoint._callback; this handler gives them the same error
+        # envelope instead of FastAPI's {"detail": ...}.
+        self.app.add_exception_handler(RestMCPException, _restmcp_exception_handler)
         # Rotas raw_response (issue #18): o FastAPI injeta um bloco de sucesso
         # automático em TODA operação do OpenAPI e não há como suprimi-lo por
         # rota — a poda vive aqui, no dono do documento. As rotas se inscrevem

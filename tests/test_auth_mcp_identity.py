@@ -17,6 +17,7 @@ from restmcp import Endpoint, Server
 from restmcp.auth import current_auth
 
 _H = {"Accept": "application/json, text/event-stream", "Authorization": "Bearer sk_1"}
+_KEYS = "painel:sk_1:read, campo:sk_2:read+write"
 _INIT = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
          "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                     "clientInfo": {"name": "t", "version": "1"}}}
@@ -71,3 +72,27 @@ def test_identity_reaches_callback_over_mcp(monkeypatch, tool):
         c.post("/mcp-protocol/", headers=h,
                json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert _call_tool(c, h, tool) == {"who": "painel", "scopes": ["read"]}
+
+
+@pytest.mark.parametrize("tool", ["who_sync", "who_async"])
+@pytest.mark.parametrize("opener,caller,expected", [
+    ("sk_2", "sk_1", {"who": "painel", "scopes": ["read"]}),
+    ("sk_1", "sk_2", {"who": "campo", "scopes": ["read", "write"]}),
+], ids=["write-session-read-call", "read-session-write-call"])
+def test_identity_is_the_calling_key_not_the_session_opener(
+        monkeypatch, tool, opener, caller, expected):
+    """current_auth inside the callback is the key of the HTTP request making
+    the tools/call, even on a session opened by another key (on fastmcp 3.x the
+    session task otherwise carries the opener's principal)."""
+    pytest.importorskip("fastmcp")
+    monkeypatch.setenv("AUTH_API_KEY", _KEYS)
+    _register()
+    app = Server.get_instance().asgi_app(mcp_path="/mcp-protocol")
+    with TestClient(app) as c:
+        h = {**_H, "Authorization": f"Bearer {opener}"}
+        r = c.post("/mcp-protocol/", json=_INIT, headers=h)
+        assert r.status_code == 200
+        h = {**h, "mcp-session-id": r.headers["mcp-session-id"]}
+        c.post("/mcp-protocol/", headers=h,
+               json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert _call_tool(c, {**h, "Authorization": f"Bearer {caller}"}, tool) == expected

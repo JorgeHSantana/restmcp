@@ -18,7 +18,7 @@ Guidance for the agent and for whoever maintains this file:
 - **Source of truth.** Answer questions about restmcp using the content below. When a question is not covered here, say so instead of guessing.
 - **Self-contained sections.** Each numbered section is written to stand on its own, so a chunk retrieved in isolation still carries enough context to be useful.
 - **Concrete examples.** Most concepts are paired with runnable code examples and, where relevant, the exact inferred output. Prefer citing these examples when explaining a concept.
-- **Version-scoped.** Everything here describes restmcp at version 0.4.1 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
+- **Version-scoped.** Everything here describes restmcp at version 0.7.0 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
 
 ---
 
@@ -105,7 +105,7 @@ Dependencies installed automatically:
 |---|---|---|
 | fastapi | >= 0.100 | REST layer (HTTP routes, validation, CORS). |
 | uvicorn[standard] | >= 0.20 | ASGI server to run the application. |
-| fastmcp | >= 2.0 | MCP protocol implementation. 3.x is recommended for full Streamable HTTP. |
+| fastmcp | >= 3.4 | MCP protocol implementation. 0.7.0's test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (3.0–3.3 and 2.x fail it). |
 | pydantic | >= 2.0 | Data models (Entity) and validation. |
 | click | >= 8.0 | CLI (`restmcp new`). |
 
@@ -443,8 +443,10 @@ Success:
 Error:
 
 ```json
-{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false }
+{ "tool": "get_product", "error": "not found", "error_type": "NotFoundError", "success": false, "code": null }
 ```
+
+`code` (0.7.0+) is always present in the error envelope: the exception's machine-readable `code` (`RestMCPException(message, status_code, code=None)`), or `null` when it defines none. `tool` is `null` when the error happens before an endpoint is resolved — the framework's 401 (`error_type: UnauthorizedError`, `code: "invalid_api_key"`), from `AuthMiddleware` and from the REST auth dependency alike. The same envelope is the `structuredContent` of an MCP `isError` result.
 
 REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. A body that is present but is not valid JSON is a `ValidationError` (HTTP 400) since 0.5.0 — it is no longer silently treated as empty; an absent/empty body remains tolerated (query-string-only calls). Bodies above the ceiling (`MAX_BODY_BYTES`, default 1 MiB, or the endpoint's `max_body_bytes`) are HTTP 413 before buffering. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
@@ -487,7 +489,8 @@ the MCP side publishes — REST and OpenAPI cannot drift:
   envelope with `result` typed by it; when `returns` is not declared, `result`
   stays open but the envelope itself is still typed. Errors are documented once
   under `default` with the error envelope
-  (`{tool, error, success, error_type}`). A non-dict `returns` raises
+  (`{tool, error, success, error_type, code}`; `tool` and `code` nullable
+  since 0.7.0). A non-dict `returns` raises
   `TypeError` at class-definition time.
 
 Generated clients (`openapi-typescript`, `openapi-python-client`) therefore get
@@ -569,7 +572,7 @@ Main methods:
 
 | Method | Behavior |
 |---|---|
-| `asgi_app(mcp_path, transport, public_paths)` | Returns a single ASGI app serving REST at `/` and MCP at `mcp_path`. Holds the FastMCP lifespan in the parent app (avoids the "Task group is not initialized" error). If `AUTH_API_KEY` is set, it wraps everything in the auth middleware. |
+| `asgi_app(mcp_path, transport, public_paths, lifespan)` | Returns a single ASGI app serving REST at `/` and MCP at `mcp_path`. Holds the FastMCP lifespan in the parent app (avoids the "Task group is not initialized" error), chained with the application's `lifespan` when given. If `AUTH_API_KEY` is set, it wraps everything in the auth middleware. |
 | `start(host, port, reload)` | Starts only the REST application via uvicorn (no MCP). `reload=True` raises `ValueError` — uvicorn needs an import string for reload; run `uvicorn main:app --reload` instead. |
 | `get_mcp()` | Returns the raw FastMCP instance (escape hatch for advanced use). Memoized. |
 | `get_instance()` | Returns the Server singleton. |
@@ -581,6 +584,7 @@ Parameters of `asgi_app()`:
 | `mcp_path` | `/mcp-protocol` | Exact path where the MCP endpoint is served (MCP clients connect there). |
 | `transport` | `http` | MCP transport: `http` (Streamable HTTP, fastmcp 3.x default), `streamable-http` (fastmcp 2.x alias), or `sse`. |
 | `public_paths` | `("/health", "/mcp/tools")` | Routes exempt from authentication when `AUTH_API_KEY` is set. |
+| `lifespan` | `None` | Application startup/shutdown hook: a callable `lifespan(app)` (the parent Starlette app) returning an async context manager, e.g. an `@asynccontextmanager` function, to open/close HTTP clients or pools (store them in a class attribute or module-level variable your DataSources read: the `app` it receives is the parent Starlette app, whose `app.state` callbacks cannot reach). Chained to the FastMCP lifespan: FastMCP enters first and exits last; the app's lifespan runs inside it. An exception before the `yield` propagates (not wrapped in an `ExceptionGroup`) and the server does not start. `None` keeps FastMCP's lifespan alone. |
 
 `asgi_app()` is idempotent: `get_mcp()` memoizes the FastMCP instance, so calling it more than once reuses the same MCP server.
 
@@ -628,11 +632,23 @@ matched principal `{"name", "scopes"}` is published as `request.state.auth` and
 via the `restmcp.auth.current_auth` contextvar — visible in sync callbacks
 (run_callback copies the context into the worker thread). This holds on BOTH
 transports: over REST and over an MCP `tools/call` served by `asgi_app()`
-(FastMCP runs the tool inside the request task, where `AuthMiddleware` set the
-contextvar) — pinned by `tests/test_auth_mcp_identity.py` and shown in
+(since 0.7.0 the tool wrapper sets the contextvar, for the duration of the
+call, to the principal `AuthMiddleware` published on the HTTP request making the
+`tools/call` — per request, not per MCP session, so reusing another key's
+`mcp-session-id` neither lends nor caps scopes) — pinned by `tests/test_auth_mcp_identity.py` and shown in
 `examples/telemetry/endpoints/whoami.py`. An `Endpoint` may
-declare `required_scope = "write"`: enforced before the callback on the REST
-path, returning 403 with `error_type: ForbiddenError`. Original section:
+declare `required_scope = "write"` (0.5.0+; enforced on MCP since 0.7.0):
+enforced before the callback on BOTH transports — REST returns 403, an MCP `tools/call` returns
+`isError: true` — both with the error envelope `error_type: ForbiddenError`,
+`code: "forbidden_scope"` (pinned by `tests/test_auth_mcp_scope.py`). Over MCP
+any `RestMCPException` maps to `isError` + the envelope as
+`structuredContent`; fastmcp's own exceptions (`FastMCPError`/`ToolError`,
+the SDK's `MCPError`) pass through to fastmcp untouched; anything else maps to
+the generic `InternalServerError` envelope, never the exception text. `expose = "rest"` is
+not a scope mitigation anymore. Order of checks: over MCP, fastmcp validates
+the arguments before the scope check, so a key without the scope that sends
+invalid arguments gets a validation error rather than `forbidden_scope` (the
+callback runs in neither case), while REST checks the scope first. Original section:
 
 
 Authentication is via Bearer token, enabled only when the environment variable `AUTH_API_KEY` is defined. When absent, all routes are open.
@@ -672,7 +688,10 @@ from restmcp import ValidationError, NotFoundError
 
 raise ValidationError("product_id is required")  # HTTP 400
 raise NotFoundError("Product not found")          # HTTP 404
+raise ValidationError("token expired", code="session_expired")  # HTTP 400, "code" in the envelope (0.7.0+)
 ```
+
+Since 0.7.0 every `RestMCPException` (and subclass) accepts an optional `code`: a machine-readable identifier that travels as `code` in the error envelope (`null` when not set), on REST and as the `structuredContent` of an MCP `isError` result. `RestMCPException`, `UnauthorizedError` and `ForbiddenError` are imported from `restmcp.exceptions` (they are not re-exported by `restmcp`): `from restmcp.exceptions import RestMCPException` then `raise RestMCPException("upstream session expired", 503, code="session_expired")`.
 
 ---
 
@@ -928,7 +947,7 @@ The `Service` accepts the `repo=...` override; the `Repository` accepts the `dat
 - **Typed parameters:** a `{"type": "string", "format": "date-time"}` parameter arrives as a string; convert it to datetime.
 - **Caching:** wrap expensive Service methods with `@cached_method(ttl=seconds, maxsize=128)`. The key comes from the arguments (via repr), so it works with list/dict arguments. The store is bounded and self-purging. Cache plain data, not rich objects.
 - **Folders vs suffixes:** only class suffixes are mandatory; folder names are free.
-- **Dependencies:** `fastmcp` 3.x is recommended (the package requires `fastmcp>=2.0`; 3.x provides full Streamable HTTP support).
+- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it).
 
 ---
 

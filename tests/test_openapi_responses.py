@@ -90,8 +90,8 @@ def test_error_envelope_documented_as_default(monkeypatch):
 
     op = _openapi(server)["paths"]["/api/faily"]["post"]
     err = op["responses"]["default"]["content"]["application/json"]["schema"]
-    assert set(err["properties"]) == {"tool", "error", "success", "error_type"}
-    assert err["required"] == ["tool", "error", "success", "error_type"]
+    assert set(err["properties"]) == {"tool", "error", "success", "error_type", "code"}
+    assert err["required"] == ["tool", "error", "success", "error_type", "code"]
 
 
 def test_invalid_returns_fails_at_definition(monkeypatch):

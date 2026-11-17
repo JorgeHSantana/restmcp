@@ -1,7 +1,39 @@
-from typing import Any, Literal, Optional
+import contextlib
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Callable, Literal, Optional
 
 from restmcp.rest import RestApp
 from restmcp.mcp import McpApp
+
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
+
+def _chain_lifespans(outer, inner):
+    """Run `inner` (the app's lifespan) inside `outer` (FastMCP's).
+
+    FastMCP runs its session manager in an anyio task group, which would wrap
+    the app's exception in an ExceptionGroup; hold it and re-raise it bare
+    once FastMCP has shut down cleanly. If FastMCP's exit then fails too, its
+    exception propagates with the app's attached as a note (not lost).
+    """
+    @contextlib.asynccontextmanager
+    async def chained(app):
+        app_error = None
+        try:
+            async with outer(app):
+                try:
+                    async with inner(app):
+                        yield
+                except Exception as exc:
+                    app_error = exc
+        except BaseException as exc:
+            if app_error is not None and exc is not app_error:
+                exc.add_note(f"app lifespan also failed: {app_error!r}")
+            raise
+        if app_error is not None:
+            raise app_error
+
+    return chained
 
 
 class Server:
@@ -79,6 +111,7 @@ class Server:
         mcp_path: str = "/mcp-protocol",
         transport: Literal["http", "streamable-http", "sse"] = "http",
         public_paths: tuple[str, ...] = ("/health", "/mcp/tools"),
+        lifespan: Optional[Callable[["Starlette"], AsyncContextManager[None]]] = None,
     ) -> Any:  # returns a Starlette app; annotated as Any to avoid importing it
         """Return one ASGI app serving REST (at '/') and MCP (at `mcp_path`).
 
@@ -92,6 +125,14 @@ class Server:
         protecting REST and the mounted MCP; `public_paths` stay open (the REST
         `/health` and `/mcp/tools` routes by default).
 
+        `lifespan`: the application's startup/shutdown hook — a callable that
+        takes the parent Starlette app and returns an async context manager
+        (e.g. an ``@asynccontextmanager`` function), to open and close
+        resources such as HTTP clients or pools. It is chained to the FastMCP
+        lifespan: FastMCP starts first and stops last, the app's lifespan runs
+        inside it. An exception in the app's startup propagates (the server
+        does not come up). ``None`` (default) keeps FastMCP's lifespan alone.
+
         Idempotent: get_mcp() memoizes the FastMCP instance, so calling this
         more than once reuses the same underlying MCP server.
         """
@@ -102,9 +143,12 @@ class Server:
         # path="/" so the MCP app serves at the mount root — i.e. exactly
         # `mcp_path` — instead of FastMCP's default "/mcp" subpath.
         mcp_http = self.get_mcp().http_app(path="/", transport=transport)
+        app_lifespan = mcp_http.lifespan
+        if lifespan is not None:
+            app_lifespan = _chain_lifespans(mcp_http.lifespan, lifespan)
         app = Starlette(
             routes=[Mount(mcp_path, app=mcp_http), Mount("/", app=self.app)],
-            lifespan=mcp_http.lifespan,
+            lifespan=app_lifespan,
         )
         if os.getenv("AUTH_API_KEY"):
             from restmcp.auth import AuthMiddleware

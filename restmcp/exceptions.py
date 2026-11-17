@@ -1,27 +1,48 @@
 class RestMCPException(Exception):
-    """Base exception for restmcp. Carries an HTTP status code alongside the message."""
+    """Base exception for restmcp. Carries an HTTP status code alongside the message.
 
-    def __init__(self, message: str, status_code: int = 500):
+    ``code`` is an optional machine-readable identifier (e.g. ``"session_expired"``)
+    that clients can branch on without parsing the message; it travels in the
+    error envelope as ``code`` and is ``None`` when the raiser does not set it.
+    """
+
+    # Class-level defaults for subclasses written for 0.6.x that never call
+    # RestMCPException.__init__: the envelope reads all three, and such a
+    # subclass must keep its own status/envelope instead of an AttributeError
+    # turning it into a bare 500. ``message`` None means "use str(exc)".
+    message: str | None = None
+    status_code: int = 500
+    code: str | None = None
+
+    def __init__(self, message: str, status_code: int = 500, code: str | None = None):
         self.message = message
         self.status_code = status_code
+        self.code = code
         super().__init__(message)
 
 
 class ValidationError(RestMCPException):
-    def __init__(self, message: str):
-        super().__init__(message, status_code=400)
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message, status_code=400, code=code)
 
 
 class NotFoundError(RestMCPException):
-    def __init__(self, message: str):
-        super().__init__(message, status_code=404)
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message, status_code=404, code=code)
 
 
 class PayloadTooLargeError(RestMCPException):
-    def __init__(self, message: str):
-        super().__init__(message, status_code=413)
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message, status_code=413, code=code)
+
+
+class UnauthorizedError(RestMCPException):
+    """Missing or unknown API key — raised by the framework's auth layer."""
+
+    def __init__(self, message: str = "Unauthorized", code: str | None = "invalid_api_key"):
+        super().__init__(message, status_code=401, code=code)
 
 
 class ForbiddenError(RestMCPException):
-    def __init__(self, message: str):
-        super().__init__(message, status_code=403)
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message, status_code=403, code=code)

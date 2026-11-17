@@ -11,6 +11,107 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
+
+One error envelope for every transport, `required_scope` enforced on MCP, and
+an application lifespan hook for `asgi_app()`.
+
+### Changed (breaking)
+- **`required_scope` now holds on MCP `tools/call`**: a key without the scope
+  (e.g. a `read` key calling a `write` tool) used to reach the callback through
+  MCP; it now gets `isError: true` with `code: "forbidden_scope"` and the
+  callback does not run (see Fixed). Clients that relied on the gap must use a
+  key that carries the scope.
+- **The framework's 401 body changed shape**: `AuthMiddleware` (which also
+  guards the mounted MCP) answered `{"error": "Unauthorized"}` and the REST
+  auth dependency FastAPI's `{"detail": "Unauthorized"}`; both now answer the
+  standard error envelope
+  `{"tool": null, "error": "Unauthorized", "success": false, "error_type": "UnauthorizedError", "code": "invalid_api_key"}`.
+  Clients that read `detail` or a bare `error` key must read the envelope.
+- **Unexpected MCP errors no longer carry the exception text**: an exception
+  that is neither a `RestMCPException` nor one of fastmcp's own is logged with
+  its traceback and returned as the generic `InternalServerError` envelope
+  (`"error": "Internal server error"`), as REST already did. fastmcp echoed
+  `str(e)` before (its `mask_error_details` defaults to `False`).
+- **MCP error text for a `RestMCPException` lost fastmcp's prefix**: the text
+  content is now the exception message alone (`"no such thing"`), where
+  fastmcp rendered `"Error calling tool 'gone': no such thing"`; the same
+  applies to the `ToolError` message raised by `fastmcp.Client.call_tool`.
+  Clients matching on the prefix must match the message or, better, read
+  `structuredContent.code`.
+- **Over MCP HTTP the principal comes from the request, not from
+  `current_auth`**: the scope check (and `current_auth` inside the callback)
+  uses the principal the framework's `AuthMiddleware` stored on the request
+  making the `tools/call`. A custom auth middleware that only sets the
+  `current_auth` contextvar is no longer seen over MCP HTTP: tools with
+  `required_scope` answer `forbidden_scope` and `current_auth.get()` is `None`
+  in the callback. REST and the in-memory transport are unaffected.
+- **Dependency floor raised to `fastmcp>=3.4`** (was `fastmcp>=2.0`): fastmcp
+  2.x already failed the test suite before this release, and 3.0–3.3 lack the
+  `ToolResult(is_error=...)` the structured MCP errors need.
+
+### Added
+- `asgi_app(lifespan=...)`: the application's startup/shutdown hook (open and
+  close HTTP clients, pools). A callable taking the parent Starlette app and
+  returning an async context manager; it is chained to the FastMCP lifespan —
+  FastMCP enters first and exits last — so MCP keeps working. An exception in
+  the app's startup propagates as itself (not wrapped in an `ExceptionGroup`)
+  and the server does not come up; if FastMCP's shutdown then fails too, its
+  exception propagates with the app's attached as a note. Default `None`:
+  unchanged behavior.
+- `code` in `RestMCPException` (`RestMCPException(message, status_code, code=None)`;
+  the built-in subclasses accept it too, without changing their status): a
+  machine-readable identifier (e.g. `"session_expired"`) clients can branch on
+  without parsing the message. Subclasses written for 0.6.x that do not call
+  `RestMCPException.__init__` keep their status and envelope: `message`,
+  `status_code` and `code` have class-level defaults (`None` → `str(exc)`,
+  `500`, `None`).
+- One error envelope, `{tool, error, success, error_type, code}`, shared by the
+  REST callback, the auth middleware, the REST auth dependency and MCP. `code`
+  is **always present**, `null` when the exception defines none; `tool` is
+  `null` when the error happens before an endpoint is resolved (the 401). The
+  OpenAPI error schema (`default`) declares `code` (`["string", "null"]`,
+  required) and now types `tool` as `["string", "null"]`. `RestApp` registers
+  a `RestMCPException` handler so exceptions raised outside the callback
+  (route dependencies) get the same envelope.
+- `UnauthorizedError` (401, `code="invalid_api_key"`, message `"Unauthorized"`).
+- The `required_scope` 403 carries `code: "forbidden_scope"`, on REST and MCP.
+- Structured MCP errors: a `RestMCPException` raised in a tool (or by the
+  scope check) becomes `isError: true` with the shared error envelope as
+  `structuredContent` and the message as text content. fastmcp's own
+  exceptions (`FastMCPError`, which covers `ToolError`, and the MCP SDK's
+  `MCPError`) pass through to fastmcp's handling untouched.
+
+### Fixed
+- `required_scope` was not enforced on MCP `tools/call`: a `read` key could
+  run a `write` tool through MCP. The scope is now checked before the callback
+  on both transports, against the principal of the HTTP request making the
+  `tools/call` (`scope["state"]["auth"]`, read through fastmcp's per-request
+  `get_http_request()`), so a session opened by one key does not lend its
+  scopes to calls made with another — verified on fastmcp 3.4.11 (where the
+  session task otherwise carries the opener's `current_auth`) and 4.2.1,
+  Streamable HTTP and SSE. During the call `current_auth` is set to that same
+  principal, so callbacks reading it see the calling key. It fails closed:
+  an HTTP request without a principal is refused whatever `current_auth`
+  says, and without an HTTP request (fastmcp's in-memory transport)
+  `current_auth` is the source and unset means refused. `expose = "rest"` is
+  no longer needed as a workaround. Over MCP, fastmcp validates the arguments before the tool runs,
+  so invalid arguments from a key without the scope get a validation error
+  rather than `forbidden_scope`; REST checks the scope first. The callback
+  runs in neither case.
+
+### Verified
+- Long calls: a 300 s callback (and a 330 s one) completes through REST and
+  through MCP (Streamable HTTP, `fastmcp.Client` and a raw JSON-RPC client)
+  served by `asgi_app()` under uvicorn — restmcp imposes no per-call deadline.
+  Measured with fastmcp 4.2.1, mcp 2.3.0, uvicorn 0.54.0, starlette 1.10.0.
+  The deadline is the ASGI server's / proxy's (e.g. Cloud Run
+  `timeoutSeconds`); clients must raise their own timeouts (README →
+  Production checklist).
+- The test suite for this release passes on fastmcp 4.2.1 (mcp 2.3.0),
+  3.4.11 and 3.4.0 (mcp 1.30.0), Python 3.14; it fails on fastmcp 3.0–3.3,
+  hence the `fastmcp>=3.4` floor.
+
 ## [0.6.1] - 2026-09-08
 
 ### Fixed
@@ -185,7 +286,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.0...v0.5.1
