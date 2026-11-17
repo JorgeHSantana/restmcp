@@ -61,6 +61,9 @@ def test_openapi_error_schema_declares_code(monkeypatch):
     err = op["responses"]["default"]["content"]["application/json"]["schema"]
     assert err["properties"]["code"] == {"type": ["string", "null"]}
     assert "code" in err["required"]
+    # tool is null when the error precedes the endpoint (401, app handler)
+    assert err["properties"]["tool"] == {"type": ["string", "null"]}
+    assert "tool" in err["required"]
 
 
 # --- the framework's own 401/403 use the same envelope ---
@@ -108,6 +111,10 @@ def test_dependency_401_uses_same_envelope(monkeypatch):
         r = c.get("/api/ler_coisa", headers={"Authorization": "Bearer nope"})
         assert r.status_code == 401
         assert r.json() == _UNAUTHORIZED
+        # no Authorization header at all
+        r = c.get("/api/ler_coisa")
+        assert r.status_code == 401
+        assert r.json() == _UNAUTHORIZED
         # non-ASCII token: rejected the same way, never a 500
         r = c.get("/api/ler_coisa",
                   headers={"Authorization": "Bearer tökén".encode("utf-8")})
@@ -131,3 +138,18 @@ def test_public_paths_still_open(monkeypatch):
     monkeypatch.setenv("AUTH_API_KEY", _KEYS)
     with TestClient(Server.get_instance().asgi_app()) as c:
         assert c.get("/health").status_code == 200
+
+
+def test_app_handler_renders_restmcp_exception_outside_callback(monkeypatch):
+    monkeypatch.delenv("AUTH_API_KEY", raising=False)
+    app = Server.get_instance().app
+
+    @app.get("/plain")
+    def plain_route():
+        raise RestMCPException("manutenção", 503, code="maintenance")
+
+    with TestClient(app) as c:
+        r = c.get("/plain")
+    assert r.status_code == 503
+    assert r.json() == {"tool": None, "error": "manutenção", "success": False,
+                        "error_type": "RestMCPException", "code": "maintenance"}

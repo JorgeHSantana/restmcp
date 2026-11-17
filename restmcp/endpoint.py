@@ -447,7 +447,8 @@ def error_envelope(exc: RestMCPException, tool: str | None) -> dict:
 _ERROR_ENVELOPE = {
     "type": "object",
     "properties": {
-        "tool": {"type": "string"},
+        # null when no endpoint is resolved yet (auth 401, app-level handler)
+        "tool": {"type": ["string", "null"]},
         "error": {"type": "string"},
         "success": {"type": "boolean"},
         "error_type": {"type": "string"},
