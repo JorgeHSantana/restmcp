@@ -11,6 +11,23 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+### Added
+- `code` in `RestMCPException` (`RestMCPException(message, status_code, code=None)`;
+  the built-in subclasses accept it too, without changing their status): a
+  machine-readable identifier (e.g. `"session_expired"`) clients can branch on
+  without parsing the message. It travels in the REST error envelope —
+  `{tool, error, success, error_type, code}` — **always present**, `null` when
+  the exception defines none, and the OpenAPI error schema (`default`) declares
+  it (`["string", "null"]`, required).
+- `UnauthorizedError` (401, `code="invalid_api_key"`, message `"Unauthorized"`).
+- The framework's 401 — from `AuthMiddleware` and from the REST auth
+  dependency alike — now uses the standard error envelope with
+  `code: "invalid_api_key"` (`tool: null`), instead of `{"error": ...}` and
+  FastAPI's `{"detail": ...}` respectively. `RestApp` registers a
+  `RestMCPException` handler so exceptions raised outside the callback get the
+  same envelope.
+- The `required_scope` 403 carries `code: "forbidden_scope"`.
+
 ## [0.6.1] - 2026-09-08
 
 ### Fixed

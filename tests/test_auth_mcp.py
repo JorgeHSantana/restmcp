@@ -76,7 +76,7 @@ def test_valid_token_non_ascii_returns_false(monkeypatch):
 
 def test_auth_dependency_non_ascii_token_is_401(monkeypatch):
     import pytest
-    from fastapi import HTTPException
+    from restmcp.exceptions import UnauthorizedError
     from starlette.requests import Request
     from restmcp.rest import _auth_dependency
 
@@ -89,6 +89,6 @@ def test_auth_dependency_non_ascii_token_is_401(monkeypatch):
         # latin-1 header value: reaches the dependency as a non-ASCII str
         "headers": [(b"authorization", "Bearer caf\xe9".encode("latin-1"))],
     }
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(UnauthorizedError) as exc:
         _auth_dependency(Request(scope))
     assert exc.value.status_code == 401

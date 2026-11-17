@@ -4,6 +4,9 @@ import os
 
 from starlette.responses import JSONResponse
 
+from restmcp.endpoint import error_envelope
+from restmcp.exceptions import UnauthorizedError
+
 # Identity of the key that authenticated the CURRENT request:
 # {"name": str | None, "scopes": frozenset[str]} — or None (auth disabled /
 # not yet authenticated). Set by AuthMiddleware and by the REST dependency;
@@ -106,7 +109,10 @@ class AuthMiddleware:
         token = token_from_authorization(auth)
         principal = match_token(token) if token else None
         if principal is None:
-            resp = JSONResponse({"error": "Unauthorized"}, status_code=401)
+            # Same envelope as every other error (tool=None: no endpoint is
+            # resolved yet) — identical to the REST dependency's 401.
+            resp = JSONResponse(error_envelope(UnauthorizedError(), None),
+                                status_code=401)
             return await resp(scope, receive, send)
 
         scope.setdefault("state", {})["auth"] = principal

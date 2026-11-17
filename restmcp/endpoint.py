@@ -264,12 +264,9 @@ class Endpoint(ABC):
             }), status_code=self.success_code)
 
         except RestMCPException as e:
-            return JSONResponse(jsonable_encoder({
-                "error": e.message,
-                "tool": self.mcp_definition["name"],
-                "success": False,
-                "error_type": e.__class__.__name__,
-            }), status_code=e.status_code)
+            return JSONResponse(
+                jsonable_encoder(error_envelope(e, self.mcp_definition["name"])),
+                status_code=e.status_code)
 
         except Exception:
             # Full traceback goes to the server log; the client gets a
@@ -277,12 +274,10 @@ class Endpoint(ABC):
             _logger.error(
                 "Unhandled error in tool %r", self.mcp_definition["name"], exc_info=True
             )
-            return JSONResponse(jsonable_encoder({
-                "error": "Internal server error",
-                "tool": self.mcp_definition["name"],
-                "success": False,
-                "error_type": "InternalServerError",
-            }), status_code=500)
+            envelope = error_envelope(
+                RestMCPException("Internal server error"), self.mcp_definition["name"])
+            envelope["error_type"] = "InternalServerError"
+            return JSONResponse(jsonable_encoder(envelope), status_code=500)
 
     def _enforce_scope(self, principal: dict | None) -> None:
         """403 when the authenticated key lacks this endpoint's required_scope.
@@ -297,7 +292,8 @@ class Endpoint(ABC):
             who = (principal or {}).get("name") or "key"
             raise ForbiddenError(
                 f"{who} lacks the {self.required_scope!r} scope required by "
-                f"{self.mcp_definition['name']!r}"
+                f"{self.mcp_definition['name']!r}",
+                code="forbidden_scope",
             )
 
     async def _read_body_capped(self, request: Request) -> bytes:
@@ -432,6 +428,22 @@ class Endpoint(ABC):
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 
+def error_envelope(exc: RestMCPException, tool: str | None) -> dict:
+    """The ONE error envelope every transport sends: ``_callback``, the auth
+    middleware, the FastAPI handler for dependency errors and MCP. ``code`` is
+    always present (``None`` when the exception defines none), so clients can
+    branch on it without probing for the key. ``tool`` is ``None`` when the
+    error happens before any endpoint is resolved (e.g. 401 in the middleware).
+    """
+    return {
+        "tool": tool,
+        "error": exc.message,
+        "success": False,
+        "error_type": exc.__class__.__name__,
+        "code": exc.code,
+    }
+
+
 _ERROR_ENVELOPE = {
     "type": "object",
     "properties": {
@@ -439,8 +451,9 @@ _ERROR_ENVELOPE = {
         "error": {"type": "string"},
         "success": {"type": "boolean"},
         "error_type": {"type": "string"},
+        "code": {"type": ["string", "null"]},
     },
-    "required": ["tool", "error", "success", "error_type"],
+    "required": ["tool", "error", "success", "error_type", "code"],
 }
 
 
@@ -476,7 +489,7 @@ def _openapi_responses(mcp_definition: dict, *,
                 "description": (
                     "Resposta crua (raw_response=True): código, headers e corpo "
                     "definidos pelo endpoint. Erros levantados por exceção usam "
-                    "o envelope de erro padrão {tool, error, success, error_type}."
+                    "o envelope de erro padrão {tool, error, success, error_type, code}."
                 ),
             },
         }
