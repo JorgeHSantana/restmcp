@@ -445,6 +445,7 @@ mcp = Server.get_instance().get_mcp()
 
   app = Server.get_instance().asgi_app(lifespan=lifespan)
   ```
+- **Long calls:** restmcp imposes no per-call deadline, on REST or MCP; the deadline belongs to the ASGI server / proxy in front (e.g. Cloud Run `timeoutSeconds`). Verified with 300 s and 330 s calls on both transports (fastmcp 4.2.1, uvicorn 0.54). Raise the **client's** timeout above your longest call — `httpx` defaults to 5 s (`httpx.AsyncClient(timeout=None)` or a large `read`); `fastmcp.Client(url, timeout=...)` for MCP. MCP results stream as SSE with a keep-alive ping every 15 s, so idle-read timeouts do not fire; a REST response is silent until the callback returns, so every idle timeout on the path (load balancer, reverse proxy) must exceed the call.
 - **Auth:** set `AUTH_API_KEY` (Bearer). `asgi_app()` protects REST **and** the mounted MCP; `/health` and `/mcp/tools` remain public. Multiple keys: comma-separated.
 - **Serialization:** callback return values are serialized with `jsonable_encoder` — `datetime` → ISO 8601, `Decimal` → string, Pydantic models → dict, automatically. Override per-entity via `serialize()`.
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.

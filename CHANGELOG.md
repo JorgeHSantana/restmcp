@@ -47,6 +47,15 @@ this file move together — the publish workflow releases whatever version is in
   run a `write` tool through MCP. The scope is now checked before the callback
   on both transports; `expose = "rest"` is no longer needed as a workaround.
 
+### Verified
+- Long calls: a 300 s callback (and a 330 s one) completes through REST and
+  through MCP (Streamable HTTP, `fastmcp.Client` and a raw JSON-RPC client)
+  served by `asgi_app()` under uvicorn — restmcp imposes no per-call deadline.
+  Measured with fastmcp 4.2.1, mcp 2.3.0, uvicorn 0.54.0, starlette 1.10.0.
+  The deadline is the ASGI server's / proxy's (e.g. Cloud Run
+  `timeoutSeconds`); clients must raise their own timeouts (README →
+  Production checklist).
+
 ## [0.6.1] - 2026-09-08
 
 ### Fixed
