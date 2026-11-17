@@ -12,6 +12,12 @@ this file move together — the publish workflow releases whatever version is in
 ## [Unreleased]
 
 ### Added
+- `asgi_app(lifespan=...)`: the application's startup/shutdown hook (open and
+  close HTTP clients, pools). A callable taking the parent Starlette app and
+  returning an async context manager; it is chained to the FastMCP lifespan —
+  FastMCP enters first and exits last — so MCP keeps working. An exception in
+  the app's startup propagates as itself (not wrapped in an `ExceptionGroup`)
+  and the server does not come up. Default `None`: unchanged behavior.
 - `code` in `RestMCPException` (`RestMCPException(message, status_code, code=None)`;
   the built-in subclasses accept it too, without changing their status): a
   machine-readable identifier (e.g. `"session_expired"`) clients can branch on

@@ -429,6 +429,22 @@ mcp = Server.get_instance().get_mcp()
 ## Production checklist
 
 - **Running REST + MCP together:** use `app = server.asgi_app()` — it mounts both and wires the FastMCP lifespan. **Do not** call `server.app.mount(...)` directly: it raises "Task group is not initialized" on the first MCP request. MCP is served at the `mcp_path` you pass (default `/mcp-protocol/`, trailing slash); REST stays at `/`.
+- **Opening and closing resources (HTTP clients, pools):** pass `lifespan=` to `asgi_app()` — a callable taking the parent Starlette app and returning an async context manager. It is chained to the FastMCP lifespan (FastMCP starts first and stops last), so MCP keeps working; an exception before the `yield` propagates and the server does not come up.
+
+  ```python
+  from contextlib import asynccontextmanager
+  import httpx
+
+  @asynccontextmanager
+  async def lifespan(app):
+      app.state.http = httpx.AsyncClient(timeout=10)
+      try:
+          yield
+      finally:
+          await app.state.http.aclose()
+
+  app = Server.get_instance().asgi_app(lifespan=lifespan)
+  ```
 - **Auth:** set `AUTH_API_KEY` (Bearer). `asgi_app()` protects REST **and** the mounted MCP; `/health` and `/mcp/tools` remain public. Multiple keys: comma-separated.
 - **Serialization:** callback return values are serialized with `jsonable_encoder` — `datetime` → ISO 8601, `Decimal` → string, Pydantic models → dict, automatically. Override per-entity via `serialize()`.
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.

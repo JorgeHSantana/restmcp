@@ -569,7 +569,7 @@ Main methods:
 
 | Method | Behavior |
 |---|---|
-| `asgi_app(mcp_path, transport, public_paths)` | Returns a single ASGI app serving REST at `/` and MCP at `mcp_path`. Holds the FastMCP lifespan in the parent app (avoids the "Task group is not initialized" error). If `AUTH_API_KEY` is set, it wraps everything in the auth middleware. |
+| `asgi_app(mcp_path, transport, public_paths, lifespan)` | Returns a single ASGI app serving REST at `/` and MCP at `mcp_path`. Holds the FastMCP lifespan in the parent app (avoids the "Task group is not initialized" error), chained with the application's `lifespan` when given. If `AUTH_API_KEY` is set, it wraps everything in the auth middleware. |
 | `start(host, port, reload)` | Starts only the REST application via uvicorn (no MCP). `reload=True` raises `ValueError` — uvicorn needs an import string for reload; run `uvicorn main:app --reload` instead. |
 | `get_mcp()` | Returns the raw FastMCP instance (escape hatch for advanced use). Memoized. |
 | `get_instance()` | Returns the Server singleton. |
@@ -581,6 +581,7 @@ Parameters of `asgi_app()`:
 | `mcp_path` | `/mcp-protocol` | Exact path where the MCP endpoint is served (MCP clients connect there). |
 | `transport` | `http` | MCP transport: `http` (Streamable HTTP, fastmcp 3.x default), `streamable-http` (fastmcp 2.x alias), or `sse`. |
 | `public_paths` | `("/health", "/mcp/tools")` | Routes exempt from authentication when `AUTH_API_KEY` is set. |
+| `lifespan` | `None` | Application startup/shutdown hook: a callable `lifespan(app)` (the parent Starlette app) returning an async context manager, e.g. an `@asynccontextmanager` function, to open/close HTTP clients or pools (store them in `app.state`). Chained to the FastMCP lifespan: FastMCP enters first and exits last; the app's lifespan runs inside it. An exception before the `yield` propagates (not wrapped in an `ExceptionGroup`) and the server does not start. `None` keeps FastMCP's lifespan alone. |
 
 `asgi_app()` is idempotent: `get_mcp()` memoizes the FastMCP instance, so calling it more than once reuses the same MCP server.
 
