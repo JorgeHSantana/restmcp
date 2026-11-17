@@ -489,10 +489,17 @@ export AUTH_API_KEY="painel:sk_abc:read, campo:sk_def:read+write, sk_legacy"
 
 The matched principal `{"name", "scopes"}` is published as `request.state.auth`
 and via the `restmcp.auth.current_auth` contextvar (visible inside sync
-callbacks too). Declare `required_scope = "write"` on an `Endpoint` to get a
-`403` before the callback when the key lacks it (REST path; on the MCP side,
-hide sensitive tools with `expose = "rest"`). The secret itself never
-propagates.
+callbacks too). Declare `required_scope = "write"` on an `Endpoint` and a key
+that lacks it is refused before the callback on **both** transports (0.7.0+):
+REST answers `403`, an MCP `tools/call` answers `isError: true` with the same
+error envelope as `structuredContent` (`code: "forbidden_scope"`). `expose =
+"rest"` is no longer needed as a scope workaround — keep it for endpoints that
+make no sense as a tool. The secret itself never propagates.
+
+Over MCP every `RestMCPException` becomes `isError: true` with the shared
+envelope (`tool, error, success, error_type, code`) as `structuredContent`;
+any other exception is logged and reaches the client as the generic
+`InternalServerError` envelope, exactly as on REST.
 
 ---
 

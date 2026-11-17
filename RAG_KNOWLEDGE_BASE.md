@@ -631,8 +631,14 @@ transports: over REST and over an MCP `tools/call` served by `asgi_app()`
 (FastMCP runs the tool inside the request task, where `AuthMiddleware` set the
 contextvar) — pinned by `tests/test_auth_mcp_identity.py` and shown in
 `examples/telemetry/endpoints/whoami.py`. An `Endpoint` may
-declare `required_scope = "write"`: enforced before the callback on the REST
-path, returning 403 with `error_type: ForbiddenError`. Original section:
+declare `required_scope = "write"`: enforced before the callback on BOTH
+transports (since 0.7.0) — REST returns 403, an MCP `tools/call` returns
+`isError: true` — both with the error envelope `error_type: ForbiddenError`,
+`code: "forbidden_scope"` (pinned by `tests/test_auth_mcp_scope.py`). Over MCP
+any `RestMCPException` maps to `isError` + the envelope as
+`structuredContent`; other exceptions map to the generic
+`InternalServerError` envelope, never the exception text. `expose = "rest"` is
+not a scope mitigation anymore. Original section:
 
 
 Authentication is via Bearer token, enabled only when the environment variable `AUTH_API_KEY` is defined. When absent, all routes are open.

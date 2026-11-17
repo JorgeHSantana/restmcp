@@ -27,6 +27,17 @@ this file move together — the publish workflow releases whatever version is in
   `RestMCPException` handler so exceptions raised outside the callback get the
   same envelope.
 - The `required_scope` 403 carries `code: "forbidden_scope"`.
+- Structured MCP errors: a `RestMCPException` raised in a tool becomes
+  `isError: true` with the shared error envelope (including `code`) as
+  `structuredContent` and the message as text content. Any other exception
+  is logged and returned as the generic `InternalServerError` envelope — the
+  exception text no longer reaches MCP clients (fastmcp echoed it, since its
+  `mask_error_details` defaults to `False`), matching REST.
+
+### Fixed
+- `required_scope` was not enforced on MCP `tools/call`: a `read` key could
+  run a `write` tool through MCP. The scope is now checked before the callback
+  on both transports; `expose = "rest"` is no longer needed as a workaround.
 
 ## [0.6.1] - 2026-09-08
 

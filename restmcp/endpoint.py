@@ -92,9 +92,10 @@ class Endpoint(ABC):
     # (e.g. base64 uploads).
     max_body_bytes: int | None = None
     # Scope this endpoint demands from the authenticated key (issue #15,
-    # step 2): e.g. "write". None = any authenticated key. Enforced on the
-    # REST path before the callback; no-op when auth is disabled. On the MCP
-    # side, hide sensitive tools structurally with expose = "rest".
+    # step 2): e.g. "write". None = any authenticated key. Enforced before the
+    # callback on BOTH transports — REST answers 403, MCP tools/call answers
+    # isError with the same envelope (code "forbidden_scope"); no-op when auth
+    # is disabled.
     required_scope: str | None = None
     # HTTP status of the SUCCESS envelope (issue #18). Declarative on purpose:
     # the same value feeds the JSONResponse and the OpenAPI document, so the
@@ -274,10 +275,9 @@ class Endpoint(ABC):
             _logger.error(
                 "Unhandled error in tool %r", self.mcp_definition["name"], exc_info=True
             )
-            envelope = error_envelope(
-                RestMCPException("Internal server error"), self.mcp_definition["name"])
-            envelope["error_type"] = "InternalServerError"
-            return JSONResponse(jsonable_encoder(envelope), status_code=500)
+            return JSONResponse(
+                jsonable_encoder(internal_error_envelope(self.mcp_definition["name"])),
+                status_code=500)
 
     def _enforce_scope(self, principal: dict | None) -> None:
         """403 when the authenticated key lacks this endpoint's required_scope.
@@ -442,6 +442,15 @@ def error_envelope(exc: RestMCPException, tool: str | None) -> dict:
         "error_type": exc.__class__.__name__,
         "code": exc.code,
     }
+
+
+def internal_error_envelope(tool: str | None) -> dict:
+    """Envelope for an unexpected (non-RestMCPException) error, shared by REST
+    and MCP: a generic message, never the exception text — the traceback goes
+    to the server log only."""
+    envelope = error_envelope(RestMCPException("Internal server error"), tool)
+    envelope["error_type"] = "InternalServerError"
+    return envelope
 
 
 _ERROR_ENVELOPE = {

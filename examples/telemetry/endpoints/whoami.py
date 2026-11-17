@@ -12,10 +12,9 @@ Try it with ``AUTH_API_KEY="painel:sk_read:read,campo:sk_full:read+write"``:
 - ``Bearer sk_full``  -> ``{"who": "campo",  "scopes": ["read", "write"]}``
 - auth disabled       -> ``{"who": null, "scopes": []}`` (no principal)
 
-``required_scope = "read"`` is enforced before the callback on the REST path
-(403 ``ForbiddenError`` for a key without it). On MCP the whole surface is
-authenticated by the key; hide write tools structurally with ``expose="rest"``
-(see purge_readings.py).
+``required_scope = "read"`` is enforced before the callback on both transports:
+REST answers 403 ``ForbiddenError`` for a key without it, an MCP ``tools/call``
+answers ``isError`` with the same envelope (``code: "forbidden_scope"``).
 """
 
 from restmcp import Endpoint
