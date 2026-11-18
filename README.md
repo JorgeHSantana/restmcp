@@ -79,18 +79,25 @@ Input handling is stricter on **both** transports (REST and MCP `tools/call`):
 
 - **Booleans are strict.** A `bool` parameter accepts only JSON `true`/`false`;
   `"true"`, `"yes"`, `"on"`, `1`, `0` are now rejected (they were coerced). In a
-  REST query string, where nothing is typed, the literals `true`/`false` are the
-  only accepted spellings (`?flag=true`).
+  REST query string, where nothing is typed, `true`/`false` in any case
+  (`?flag=true`, `?flag=True`, `?flag=FALSE`) are the only accepted spellings;
+  `?flag=1`, `?flag=yes`, `?flag=on` are rejected. Strictness is for what the
+  client sends: declared defaults keep 0.7's lax rules (`flag: bool = 0` still
+  registers, as `False`).
 - **`Literal[...]` becomes `enum`.** `Literal["a", "b"]` (also `Optional[...]`,
   with a default, and `list[Literal[...]]`) is published with `enum` in
   `tools/list`, `/mcp/tools` and OpenAPI, and a value outside the set is
   rejected. An `enum` in a hand-written `mcp_definition` is enforced too (it was
-  only published).
+  only published); if its `default` is outside the set, registration emits a
+  `UserWarning` and keeps the default, while a `Literal` whose default is not a
+  member raises `TypeError` at class definition.
 - **Rejected arguments carry `code: "validation_error"`.** Still HTTP 400 with
   `error_type: "ValidationError"` (the `code` was `null`); over MCP the same
   envelope is the `structuredContent` of the `isError` result, which used to be
   fastmcp's raw pydantic text with the rejected value echoed back. The message
-  names the parameter, never the value.
+  names the parameter, never the rejected value.
+- **MCP checks the scope before the arguments**, like REST: a key without the
+  tool's `required_scope` gets `forbidden_scope` whatever it sends.
 
 ---
 
@@ -297,15 +304,18 @@ Schema property, and REST and MCP validate it with the same pydantic model:
 | `str` | `{"type": "string"}` | strings only (no number/boolean coercion) |
 | `int` | `{"type": "integer"}` | integers, integral floats, numeric strings; never a boolean |
 | `float` | `{"type": "number"}` | numbers, numeric strings; never a boolean |
-| `bool` | `{"type": "boolean"}` | JSON `true`/`false` only (0.8.0+); query string: `true`/`false` |
-| `Literal["a", "b"]` | `{"type": "string", "enum": ["a", "b"]}` | a member of the set (0.8.0+); integer literals also take `"2"`, never a boolean |
+| `bool` | `{"type": "boolean"}` | JSON `true`/`false` only (0.8.0+); query string: `true`/`false`, any case |
+| `Literal["a", "b"]` | `{"type": "string", "enum": ["a", "b"]}` | a member of the set (0.8.0+), validated by the member type first: `Literal[1, 2]` takes `"2"`/`2.0` (as `int` does), never a boolean; `Literal[1.5, 2.5]` is `type: number` |
 | `list[T]` | `{"type": "array", "items": <T>}` | a JSON array, each item validated as `T` |
 | `dict` | `{"type": "object"}` | a JSON object |
 
 `Optional[T]` / a default of `None` also accepts `null`; a non-`None` default is
-validated against `T` at registration. A missing required parameter, an unknown
-one, or a value of the wrong type answers HTTP 400 (REST) / `isError` (MCP) with
-`code: "validation_error"`.
+coerced at registration with 0.7's lax rules (strictness applies to client
+input, not to what the author declared). `Union[Literal["a"], Literal["b"]]` is
+treated as `Literal["a", "b"]`; a mixed `Literal[True, "auto"]` publishes a bare
+`enum` and its query-string `true`/`false` become booleans. A missing required
+parameter, an unknown one, or a value of the wrong type answers HTTP 400 (REST)
+/ `isError` (MCP) with `code: "validation_error"`.
 
 ```python
 class GetProductEndpoint(Endpoint):
@@ -436,7 +446,7 @@ Arguments the framework rejects (wrong type, missing required, unknown
 parameter, value outside an `enum`, non-boolean for a boolean, body that is not
 a JSON object) answer HTTP 400 with `code: "validation_error"` (0.8.0+; `null`
 before). The message names each parameter and what it expects — never the
-rejected value:
+rejected value (an unknown parameter's name is cut to 64 characters):
 
 ```json
 { "tool": "cancel_line", "error": "confirm: Input should be a valid boolean", "success": false, "error_type": "ValidationError", "code": "validation_error" }
@@ -596,10 +606,14 @@ answers `isError: true` with the same error envelope as `structuredContent`
 workaround — keep it for endpoints that make no sense as a tool. The secret
 itself never propagates.
 
-Order of checks: over MCP the arguments are validated before the scope
-check, so a key without the scope that sends invalid arguments gets
-`code: "validation_error"` rather than `forbidden_scope` (the callback runs in
-neither case), while REST checks the scope first.
+Order of checks (0.8.0+): the scope comes first on both transports, so a key
+without the scope gets `forbidden_scope` whatever its arguments; a key with
+the scope then gets `code: "validation_error"` for invalid arguments. (Until
+0.7.x MCP validated the arguments first.) Over MCP, valid arguments are
+validated twice — by restmcp's middleware, then by fastmcp with the same types
+— at negligible cost. Protocol-level errors the MCP SDK raises before a tool
+is resolved (e.g. a malformed JSON-RPC message or batch) are outside restmcp
+and may quote the request.
 
 Over MCP every `RestMCPException` becomes `isError: true` with the shared
 envelope (`tool, error, success, error_type, code`) as `structuredContent` —

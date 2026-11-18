@@ -3,10 +3,12 @@ import asyncio
 import pytest
 
 from restmcp.mcp import McpApp
+from restmcp.schema import build_arg_model
 
 
 class _Handler:
-    mcp_definition = {
+    # build() fails closed without the REST argument model (0.8.0)
+    mcp_definition: dict = {
         "name": "get_device",
         "description": "Latest reading for one device.",
         "parameters": {
@@ -20,6 +22,9 @@ class _Handler:
     @staticmethod
     def callback(device_id, tags=None):
         return {"device_id": device_id, "tags": tags}
+
+
+_Handler._arg_model = build_arg_model(_Handler.mcp_definition)
 
 
 def test_real_fastmcp_registers_flat_tool_and_exposes_schema():

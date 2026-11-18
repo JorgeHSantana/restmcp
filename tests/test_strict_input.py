@@ -218,11 +218,11 @@ def test_bool_accepts_json_booleans_and_defaults(rest, mcp):
 
 
 def test_bool_query_string_takes_only_true_and_false(rest):
-    # A query string has no types: the JSON literals are the only spellings.
+    # A query string has no types: true/false (any case) are the only spellings.
     assert rest.get("/api/flag-query?flag=true").json()["result"] == {"flag": True}
     assert rest.get("/api/flag-query?flag=false").json()["result"] == {"flag": False}
     assert rest.get("/api/flag-query").json()["result"] == {"flag": False}
-    for bad in ("yes", "1", "0", "on", "True", SECRET):
+    for bad in ("yes", "1", "0", "on", "t", SECRET):
         _assert_rest_validation(rest.get(f"/api/flag-query?flag={bad}"),
                                 "flag_query", "flag")
 
@@ -341,7 +341,9 @@ def test_hand_written_enum_is_enforced(rest, mcp):
 
 
 def test_literal_default_outside_enum_fails_at_registration():
-    with pytest.raises(ValueError, match="mode"):
+    # an annotation that contradicts its own default is the author's type
+    # error: it raises (the hand-written enum case only warns, see below)
+    with pytest.raises(TypeError, match="BadDefaultEndpoint.*mode"):
         class BadDefaultEndpoint(Endpoint):
             url = "/api/bad-default"
             method = "POST"
@@ -387,12 +389,7 @@ def test_domain_validation_error_keeps_its_own_code(rest, mcp):
     assert result["structuredContent"]["code"] is None
 
 
-def test_mcp_validation_runs_before_scope(monkeypatch):
-    """Ordering is unchanged: a scoped tool called with bad arguments by a key
-    without the scope still answers validation_error (validation first)."""
-    pytest.importorskip("fastmcp")
-    monkeypatch.setenv("AUTH_API_KEY", "painel:sk_1:read")
-
+def _register_scoped():
     class ScopedTypedEndpoint(Endpoint):
         required_scope = "write"
         mcp_definition = {"name": "scoped_typed", "description": "x",
@@ -403,17 +400,67 @@ def test_mcp_validation_runs_before_scope(monkeypatch):
         def callback(self, n):
             return {"n": n}
 
-    from fastmcp import Client
 
+def _mcp_http_call(key, tool, arguments):
+    app = Server.get_instance().asgi_app(mcp_path="/mcp-protocol")
+    h = {**_H, "Authorization": f"Bearer {key}"}
+    with TestClient(app) as c:
+        r = c.post("/mcp-protocol/", json=_INIT, headers=h)
+        assert r.status_code == 200, r.text
+        sid = r.headers.get("mcp-session-id")
+        h = {**h, **({"mcp-session-id": sid} if sid else {})}
+        c.post("/mcp-protocol/", headers=h,
+               json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        r = c.post("/mcp-protocol/", headers=h, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}})
+    data = [l for l in r.text.splitlines() if l.startswith("data:")]
+    return json.loads(data[-1][len("data:"):])["result"]
+
+
+@pytest.mark.parametrize("arguments", [{"n": SECRET}, {}, {"n": 1, "bogus": 1}, {"n": 1}])
+def test_mcp_scope_is_checked_before_arguments(monkeypatch, arguments):
+    """Same order as REST: an under-scoped key gets forbidden_scope whatever
+    the arguments (valid or not); the scoped key gets the validation result."""
+    pytest.importorskip("fastmcp")
+    monkeypatch.setenv("AUTH_API_KEY", "painel:sk_1:read, campo:sk_2:read+write")
+    _register_scoped()
+    result = _mcp_http_call("sk_1", "scoped_typed", arguments)
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "forbidden_scope"
+    assert SECRET not in json.dumps(result)
+    with TestClient(Server.get_instance().app) as c:
+        r = c.post("/api/scoped-typed", json=arguments,
+                   headers={"Authorization": "Bearer sk_1"})
+    assert r.status_code == 403 and r.json()["code"] == "forbidden_scope"
+
+
+def test_mcp_scoped_key_still_gets_validation_error(monkeypatch):
+    pytest.importorskip("fastmcp")
+    monkeypatch.setenv("AUTH_API_KEY", "painel:sk_1:read, campo:sk_2:read+write")
+    _register_scoped()
+    _assert_mcp_validation(_mcp_http_call("sk_2", "scoped_typed", {"n": SECRET}),
+                           "scoped_typed", "n")
+    ok = _mcp_http_call("sk_2", "scoped_typed", {"n": 3})
+    assert not ok.get("isError") and ok["structuredContent"] == {"n": 3}
+
+
+def test_mcp_without_auth_validates_as_before():
+    # auth disabled (autouse fixture): no scope check, validation answers
+    pytest.importorskip("fastmcp")
     import asyncio
 
-    async def go():
-        async with Client(Server.get_instance().get_mcp()) as c:
-            return await c.call_tool("scoped_typed", {"n": "x"}, raise_on_error=False)
+    from fastmcp import Client
 
-    res = asyncio.run(go())
-    assert res.is_error
-    assert res.structured_content["code"] == "validation_error"
+    _register_scoped()
+
+    async def go(args):
+        async with Client(Server.get_instance().get_mcp()) as c:
+            return await c.call_tool("scoped_typed", args, raise_on_error=False)
+
+    res = asyncio.run(go({"n": "x"}))
+    assert res.is_error and res.structured_content["code"] == "validation_error"
+    assert asyncio.run(go({"n": 2})).structured_content == {"n": 2}
 
 
 def test_enum_members_keep_their_json_type():
@@ -444,3 +491,201 @@ def test_unsupported_enum_is_published_not_enforced():
     assert python_type_for({"type": "string", "enum": [{"a": 1}]}) is str
     from typing import get_args
     assert get_args(python_type_for({"type": "number", "enum": [0.5, 1.5]}))[0] is float
+
+
+# --- fix round 1: author declarations keep importing; client input is strict --
+
+import warnings
+
+
+@pytest.mark.parametrize("default,expected", [(0, False), (1, True), ("false", False),
+                                              ("yes", True), ("on", True)])
+def test_lax_boolean_defaults_still_register(rest, default, expected):
+    # a bump from 0.7 must never stop an app from importing: boolean DEFAULTS
+    # keep 0.7's lax rules; strictness is for what clients send
+    from restmcp.schema import field_spec_for
+
+    _, value = field_spec_for("flag", {"type": "boolean", "default": default})
+    assert value is expected
+
+    class LaxDefaultEndpoint(Endpoint):
+        mcp_definition = {"name": "lax_default", "description": "x",
+                          "parameters": {"properties": {
+                              "flag": {"type": "boolean", "default": default}}}}
+        url = "/api/lax-default"
+        method = "POST"
+
+        def callback(self, flag):
+            return {"flag": flag}
+
+    assert rest.post("/api/lax-default", json={}).json()["result"] == {"flag": expected}
+    # ...but the client still has to send a JSON boolean
+    _assert_rest_validation(rest.post("/api/lax-default", json={"flag": default}),
+                            "lax_default", "flag")
+
+
+def test_inferred_bool_default_zero_still_registers(rest):
+    class ZeroDefaultEndpoint(Endpoint):
+        url = "/api/zero-default"
+        method = "POST"
+
+        def callback(self, flag: bool = 0):  # type: ignore[assignment]
+            """x.
+
+            Returns: the flag.
+            """
+            return {"flag": flag}
+
+    assert rest.post("/api/zero-default", json={}).json()["result"] == {"flag": False}
+
+
+def test_boolean_default_that_0_7_rejected_still_raises():
+    from restmcp.schema import field_spec_for
+
+    with pytest.raises(TypeError, match="flag"):
+        field_spec_for("flag", {"type": "boolean", "default": "banana"})
+
+
+def _mcp_memory_call(tool, arguments):
+    import asyncio
+
+    from fastmcp import Client
+
+    async def go():
+        async with Client(Server.get_instance().get_mcp()) as c:
+            return await c.call_tool(tool, arguments, raise_on_error=False)
+
+    return asyncio.run(go())
+
+
+def test_hand_written_enum_default_outside_set_warns_not_raises(rest):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        class LegacyEnumEndpoint(Endpoint):
+            mcp_definition = {"name": "legacy_enum", "description": "x",
+                              "parameters": {"properties": {
+                                  "color": {"type": "string", "enum": ["red", "blue"],
+                                            "default": "green"}}}}
+            url = "/api/legacy-enum"
+            method = "POST"
+
+            def callback(self, color):
+                return {"color": color}
+
+    msgs = [str(w.message) for w in caught]
+    assert any("legacy_enum" in m and "color" in m for m in msgs), msgs
+    # default kept when omitted...
+    assert rest.post("/api/legacy-enum", json={}).json()["result"] == {"color": "green"}
+    assert _mcp_memory_call("legacy_enum", {}).structured_content == {"color": "green"}
+    # ...but a client cannot send it, nor anything else outside the set
+    _assert_rest_validation(rest.post("/api/legacy-enum", json={"color": "green"}),
+                            "legacy_enum", "color")
+    res = _mcp_memory_call("legacy_enum", {"color": "green"})
+    assert res.is_error and res.structured_content["code"] == "validation_error"
+    assert rest.post("/api/legacy-enum", json={"color": "blue"}).json()["result"] == \
+        {"color": "blue"}
+
+
+@pytest.mark.parametrize("spelling,expected", [("true", True), ("True", True),
+                                               ("TRUE", True), ("false", False),
+                                               ("False", False), ("FALSE", False)])
+def test_query_bool_is_case_insensitive(rest, spelling, expected):
+    r = rest.get(f"/api/flag-query?flag={spelling}")
+    assert r.json()["result"] == {"flag": expected}
+
+
+def test_unknown_parameter_name_is_truncated(rest, mcp):
+    long_name = "x" * 200
+    body = _assert_rest_validation(rest.post("/api/typed", json={"n": 1, long_name: 1}),
+                                   "typed")
+    assert "x" * 64 in body["error"]
+    assert "x" * 65 not in body["error"]
+    sc = _assert_mcp_validation(_call(mcp, "typed", {"n": 1, long_name: 1}), "typed")
+    assert "x" * 65 not in sc["error"]
+
+
+def test_build_fails_closed_without_arg_model():
+    pytest.importorskip("fastmcp")
+    from restmcp.mcp import McpApp
+
+    class NoModel:
+        mcp_definition = {"name": "no_model", "description": "x",
+                          "parameters": {"properties": {}}}
+
+        @staticmethod
+        def callback():
+            return {}
+
+    with pytest.raises(TypeError, match="no_model"):
+        McpApp().build([NoModel()])
+
+
+@pytest.mark.parametrize("prop,sent,expected", [
+    # typed enums hand the callback the declared type, as in 0.7
+    ({"type": "integer", "enum": [1, 2]}, "2.0", 2),
+    ({"type": "integer", "enum": [1, 2]}, 2.0, 2),
+    ({"type": "number", "enum": [1, 2]}, 1, 1.0),
+    ({"type": "number", "enum": [1, 2]}, "2", 2.0),
+    ({"type": "string", "enum": ["1", "2"]}, "1", "1"),
+    # untyped (mixed) enum: a string that is itself a member stays a string
+    ({"enum": ["1", 2]}, "1", "1"),
+    ({"enum": ["1", 2]}, "2", 2),
+    ({"enum": ["auto", True]}, True, True),
+])
+def test_enum_input_keeps_declared_type(prop, sent, expected):
+    from pydantic import TypeAdapter
+    from restmcp.schema import python_type_for
+
+    got = TypeAdapter(python_type_for(prop)).validate_python(sent)
+    assert got == expected and type(got) is type(expected)
+
+
+@pytest.mark.parametrize("prop,sent", [
+    ({"type": "string", "enum": [1, 2]}, 1),     # 0.7: str, never an int
+    ({"type": "integer", "enum": [1, 2]}, True),
+    ({"type": "integer", "enum": [1, 2]}, "2.5"),
+    ({"enum": ["auto", True]}, 1),
+    ({"enum": ["auto", True]}, "true"),
+    ({"enum": ["1", 2]}, True),
+])
+def test_enum_input_rejections(prop, sent):
+    from pydantic import TypeAdapter, ValidationError as PVE
+    from restmcp.schema import python_type_for
+
+    with pytest.raises(PVE):
+        TypeAdapter(python_type_for(prop)).validate_python(sent)
+
+
+def _register_more():
+    from typing import Union
+
+    class MoreEndpoint(Endpoint):
+        url = "/api/more"
+        method = "GET"
+
+        def callback(self, ratio: Literal[1.5, 2.5] = 1.5,
+                     either: Union[Literal["a"], Literal["b"]] = "a",
+                     mix: Literal[True, "auto"] = "auto"):
+            """x.
+
+            Returns: the values.
+            """
+            return {"ratio": ratio, "either": either, "mix": mix}
+
+
+def test_float_union_and_mixed_literals(rest):
+    _register_more()
+    with TestClient(Server.get_instance().app) as c:
+        props = {t["name"]: t for t in c.get("/mcp/tools").json()["tools"]}["more"][
+            "parameters"]["properties"]
+        assert props["ratio"] == {"type": "number", "enum": [1.5, 2.5], "default": 1.5}
+        assert props["either"] == {"type": "string", "enum": ["a", "b"], "default": "a"}
+        assert props["mix"] == {"enum": [True, "auto"], "default": "auto"}
+        assert c.get("/api/more?ratio=2.5&either=b&mix=true").json()["result"] == \
+            {"ratio": 2.5, "either": "b", "mix": True}
+        assert c.get("/api/more?mix=TRUE").json()["result"]["mix"] is True
+        assert c.get("/api/more?mix=auto").json()["result"]["mix"] == "auto"
+        for bad in ("ratio=3.5", "either=c", "mix=1", "mix=yes"):
+            r = c.get(f"/api/more?{bad}")
+            assert r.status_code == 400 and r.json()["code"] == "validation_error", bad

@@ -20,6 +20,17 @@ class McpApp:
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
+        for handler in url_handlers:
+            # Fail closed: without the argument model the validation
+            # middleware could not run, and fastmcp's raw pydantic text (which
+            # echoes the rejected value) would reach the client.
+            if getattr(handler, "_arg_model", None) is None:
+                name = (getattr(handler, "mcp_definition", None) or {}).get("name")
+                raise TypeError(
+                    f"MCP tool {name!r}: handler has no _arg_model — restmcp "
+                    f"validates tools/call arguments with the endpoint's argument "
+                    f"model; register tools through Endpoint."
+                )
         mcp = FastMCP("restmcp")
         for handler in url_handlers:
             self._register_tool(mcp, handler)
@@ -165,24 +176,33 @@ def _argument_validation_middleware(handlers: dict):
     same field_spec_for as the signature — so an invalid call gets the shared
     envelope with ``code: "validation_error"`` and the same message as REST.
     Valid arguments go on unchanged (fastmcp then validates them again, with
-    the same types, and calls the wrapper). Validation still precedes the
-    scope check, which lives in the wrapper.
+    the same types, and calls the wrapper).
+
+    The scope is checked FIRST, as REST does: an under-scoped key gets
+    ``forbidden_scope`` whatever its arguments. Same principal source as the
+    wrapper (_call_principal), whose own check stays as a second gate; with
+    auth disabled ``_enforce_scope`` is a no-op.
     """
     from fastmcp.server.middleware import Middleware
     from pydantic import ValidationError as PydanticValidationError
 
+    from restmcp.auth import current_auth
     from restmcp.endpoint import argument_validation_error, error_envelope
+    from restmcp.exceptions import RestMCPException
 
     class ArgumentValidation(Middleware):
         async def on_call_tool(self, context, call_next):
             name = context.message.name
-            arg_model = getattr(handlers.get(name), "_arg_model", None)
-            if arg_model is not None:
+            handler = handlers.get(name)
+            if handler is not None:
                 try:
-                    arg_model.model_validate(context.message.arguments or {})
+                    handler._enforce_scope(_call_principal(current_auth))
+                    handler._arg_model.model_validate(context.message.arguments or {})
                 except PydanticValidationError as e:
                     return _error_result(
                         error_envelope(argument_validation_error(e), name))
+                except RestMCPException as e:
+                    return _error_result(error_envelope(e, name))
             return await call_next(context)
 
     return ArgumentValidation()

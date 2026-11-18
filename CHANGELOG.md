@@ -21,21 +21,36 @@ Stricter input handling on both transports: strict booleans, `Literal` as
   `{"type": "boolean"}`) accepts only JSON `true`/`false`, on REST and on MCP
   `tools/call`. `"true"`, `"yes"`, `"on"`, `1`, `0` — coerced by pydantic-lax
   until 0.7.x — are now a validation error (HTTP 400 / `isError`). Optional
-  booleans still accept `null`, defaults are unchanged, and integers/numbers
-  still reject booleans. In a REST query string, which carries no types, the
-  literals `true`/`false` are the only accepted spellings (`?flag=true`);
-  `?flag=1`, `?flag=yes` are rejected. Clients that send `"true"`/`1` in a
-  JSON body or MCP arguments must send JSON booleans.
+  booleans still accept `null` and integers/numbers still reject booleans.
+  Strictness is for what the client sends: declared defaults keep 0.7's lax
+  coercion, so `flag: bool = 0` or a hand-written
+  `{"type": "boolean", "default": "false"}` still register (as `False`); a
+  default 0.7 rejected (`"banana"`) still raises. In a REST query string, which
+  carries no types, `true`/`false` in any case (`true`, `True`, `FALSE`) are
+  the only accepted spellings; `?flag=1`, `?flag=yes`, `?flag=on` are rejected.
+  Clients that send `"true"`/`1` in a JSON body or MCP arguments must send
+  JSON booleans.
 - **`Literal[...]` is published as `enum` and enforced**: `Literal["a", "b"]`
   (also `Optional[...]`, with a default, and `list[Literal[...]]`) was reduced
   to `{"type": "string"}` and accepted any string; it now appears as
   `{"type": "string", "enum": ["a", "b"]}` in MCP `tools/list`, `/mcp/tools`
   and OpenAPI, and a value outside the set is a validation error. Integer
-  literals (`Literal[1, 2]` → `{"type": "integer", "enum": [1, 2]}`) work too:
-  they accept `2` or `"2"`, never `true`. An `enum` in a hand-written
-  `mcp_definition` (str/int/bool/null members) is now enforced as well — it
-  used to be published only. A `Literal` default outside its set fails at
-  registration.
+  literals (`Literal[1, 2]` → `{"type": "integer", "enum": [1, 2]}`) take what
+  `int` takes (`2`, `"2"`, `2.0`), never `true`; float literals
+  (`Literal[1.5, 2.5]`) publish `type: number`; `Union[Literal["a"],
+  Literal["b"]]` is treated as `Literal["a", "b"]`; a mixed
+  `Literal[True, "auto"]` publishes a bare `enum`, and its query-string
+  `true`/`false` become booleans. An `enum` in a hand-written `mcp_definition`
+  (str/int/float/bool/null members) is now enforced as well — it used to be
+  published only. With a declared `type` the value is validated by that type
+  first, so the callback receives the same Python type as in 0.7 (a
+  `{"type": "number", "enum": [1, 2]}` still hands over floats).
+  Defaults outside the set: a hand-written enum whose `default` is not a
+  member **does not raise** — registration emits a `UserWarning` naming the
+  tool and parameter, the default is still used when the client omits the
+  parameter, and a client cannot send it; a `Literal` annotation whose default
+  is not a member (`mode: Literal["a", "b"] = "c"`) raises `TypeError` at class
+  definition (an author type error).
 - **`code: "validation_error"` on rejected arguments**: wrong type, missing
   required, unknown parameter, value outside an `enum`, non-boolean for a
   boolean, and a body that is not a JSON object still answer HTTP 400 with
@@ -48,7 +63,22 @@ Stricter input handling on both transports: strict booleans, `Literal` as
   (`"confirm: Input should be a valid boolean"`), never the rejected value. A
   `ValidationError` raised by a callback keeps its own `code`. The MCP text for
   a missing argument changed accordingly (`"n: Field required"`, was fastmcp's
-  `"Missing required keyword only argument"`).
+  `"Missing required keyword only argument"`). An unknown parameter's name is
+  cut to 64 characters in the message.
+- **MCP checks `required_scope` before the arguments**, as REST does: a key
+  without the scope now gets `forbidden_scope` whatever it sends (0.7.x
+  validated the arguments first and answered a validation error). With auth
+  disabled nothing changes.
+- **`McpApp.build()` fails closed**: a handler without `_arg_model` raises
+  `TypeError` (only reachable when building MCP from objects that are not
+  registered `Endpoint`s).
+
+### Notes
+- Over MCP, valid arguments are validated twice (restmcp's middleware, then
+  fastmcp, same types) — negligible cost, kept so fastmcp's own path is
+  untouched.
+- Protocol-level errors the MCP SDK raises before a tool is resolved (e.g. a
+  malformed JSON-RPC batch) are outside restmcp and may quote the request.
 
 ### Docs
 - README and RAG knowledge base: parameter types and what each accepts, strict
@@ -331,7 +361,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...v0.6.0

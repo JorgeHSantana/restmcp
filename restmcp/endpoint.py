@@ -33,30 +33,53 @@ def argument_validation_error(exc: PydanticValidationError) -> ValidationError:
 
     Each failure reads ``<parameter>: <pydantic message>``. pydantic's
     ``msg`` describes the expectation, never the input; ``input`` and ``ctx``
-    are dropped on purpose — the rejected value may be a secret.
+    are dropped on purpose — the rejected value may be a secret. The
+    parameter name is the client's for an unknown key, so each location part
+    is cut to ``_MAX_LOC_CHARS``.
     """
     parts = []
     for err in exc.errors(include_url=False, include_input=False,
                           include_context=False):
-        loc = ".".join(str(p) for p in err["loc"]) or "body"
+        loc = ".".join(_clip(str(p)) for p in err["loc"]) or "body"
         parts.append(f"{loc}: {err['msg']}")
     return ValidationError("; ".join(parts), code=VALIDATION_ERROR_CODE)
+
+
+_MAX_LOC_CHARS = 64
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= _MAX_LOC_CHARS else text[:_MAX_LOC_CHARS] + "…"
+
+
+def boolean_fields(mcp_definition: dict) -> frozenset:
+    """Parameters that can take a boolean: ``type: boolean``, or an ``enum``
+    with a boolean member (``Literal[True, "auto"]``)."""
+    props = (mcp_definition.get("parameters") or {}).get("properties") or {}
+    return frozenset(
+        name for name, prop in props.items()
+        if isinstance(prop, dict) and (
+            prop.get("type") == "boolean"
+            or any(isinstance(v, bool) for v in prop.get("enum") or ())
+        )
+    )
 
 
 def query_arguments(query_params, arg_model, boolean_fields) -> dict:
     """Query-string values for the declared parameters (unknown keys ignored).
 
-    A query string carries no types; for a boolean parameter the JSON literals
-    ``true``/``false`` are the only spellings turned into a bool. Anything else
-    stays a string and is rejected by the strict boolean (no "1", "yes", "on").
+    A query string carries no types; for a parameter that takes a boolean,
+    ``true``/``false`` in any case (``True``, ``FALSE``) are the only
+    spellings turned into a bool. Anything else stays a string and is
+    rejected by the strict boolean (no "1", "yes", "on").
     """
     known = arg_model.model_fields
     data = {}
     for key, value in query_params.items():
         if key not in known:
             continue
-        if key in boolean_fields and value in ("true", "false"):
-            value = value == "true"
+        if key in boolean_fields and value.lower() in ("true", "false"):
+            value = value.lower() == "true"
         data[key] = value
     return data
 
@@ -395,13 +418,7 @@ class Endpoint(ABC):
             raise ValueError(f"{cls.__name__}: invalid mcp_definition — {e}") from e
         # Parameters whose query-string "true"/"false" become bools (see
         # query_arguments).
-        self._boolean_fields = frozenset(
-            name
-            for name, prop in (
-                (self.mcp_definition.get("parameters") or {}).get("properties") or {}
-            ).items()
-            if isinstance(prop, dict) and prop.get("type") == "boolean"
-        )
+        self._boolean_fields = boolean_fields(self.mcp_definition)
 
         # Every declared property reaches the callback (defaults included,
         # matching the MCP transport), so the signature must accept them all —
