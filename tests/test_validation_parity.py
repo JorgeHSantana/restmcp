@@ -25,10 +25,14 @@ CASES = [
     ({"n": 1, "x": 1.5}, True),
     ({"n": 1, "x": "1.5"}, True),
     ({"n": 1, "x": True}, False),
-    # boolean: pydantic-lax inputs accepted, junk rejected
+    # boolean: strict since 0.8.0 — JSON true/false only
     ({"n": 1, "f": True}, True),
-    ({"n": 1, "f": 1}, True),
-    ({"n": 1, "f": "on"}, True),
+    ({"n": 1, "f": False}, True),
+    ({"n": 1, "f": 1}, False),
+    ({"n": 1, "f": 0}, False),
+    ({"n": 1, "f": "on"}, False),
+    ({"n": 1, "f": "true"}, False),
+    ({"n": 1, "f": "yes"}, False),
     ({"n": 1, "f": "nope"}, False),
     ({"n": 1, "f": 2}, False),
     # boolean with non-None default: explicit null rejected

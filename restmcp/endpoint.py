@@ -20,6 +20,46 @@ from restmcp.schema import build_arg_model, check_property_name
 
 _logger = Logger("restmcp.endpoint")
 
+# ``code`` of every ValidationError the FRAMEWORK raises for rejected input
+# (wrong type, missing required, unknown parameter, value outside an enum,
+# non-boolean for a boolean, body that is not a JSON object) on REST and MCP.
+# A ValidationError raised by a callback keeps whatever code its author set.
+VALIDATION_ERROR_CODE = "validation_error"
+
+
+def argument_validation_error(exc: PydanticValidationError) -> ValidationError:
+    """The ONE translation of a pydantic error on tool arguments, shared by
+    REST (_callback) and MCP (mcp.py), so both transports send the same text.
+
+    Each failure reads ``<parameter>: <pydantic message>``. pydantic's
+    ``msg`` describes the expectation, never the input; ``input`` and ``ctx``
+    are dropped on purpose — the rejected value may be a secret.
+    """
+    parts = []
+    for err in exc.errors(include_url=False, include_input=False,
+                          include_context=False):
+        loc = ".".join(str(p) for p in err["loc"]) or "body"
+        parts.append(f"{loc}: {err['msg']}")
+    return ValidationError("; ".join(parts), code=VALIDATION_ERROR_CODE)
+
+
+def query_arguments(query_params, arg_model, boolean_fields) -> dict:
+    """Query-string values for the declared parameters (unknown keys ignored).
+
+    A query string carries no types; for a boolean parameter the JSON literals
+    ``true``/``false`` are the only spellings turned into a bool. Anything else
+    stays a string and is rejected by the strict boolean (no "1", "yes", "on").
+    """
+    known = arg_model.model_fields
+    data = {}
+    for key, value in query_params.items():
+        if key not in known:
+            continue
+        if key in boolean_fields and value in ("true", "false"):
+            value = value == "true"
+        data[key] = value
+    return data
+
 
 async def run_callback(callback: object, /, **kwargs):
     """Invoke an Endpoint callback under restmcp's sync/async contract.
@@ -217,27 +257,25 @@ class Endpoint(ABC):
                     # not an empty body: swallowing it let defaults turn a
                     # truncated payload into a different, "successful" call
                     # (issue #13).
-                    raise ValidationError("Request body is not valid JSON")
+                    raise ValidationError("Request body is not valid JSON",
+                                          code=VALIDATION_ERROR_CODE)
             if body is None:
                 body = {}
             if not isinstance(body, dict):
-                raise ValidationError("Request body must be a JSON object")
+                raise ValidationError("Request body must be a JSON object",
+                                      code=VALIDATION_ERROR_CODE)
 
             # Query filtered to known keys (body-strict, query-tolerant): unknown
             # query keys (tracking params etc.) are ignored, unknown body keys are
             # rejected by the model's extra='forbid'. Body wins on conflicts.
-            known = self._arg_model.model_fields
-            data = {k: v for k, v in request.query_params.items() if k in known}
+            data = query_arguments(request.query_params, self._arg_model,
+                                   self._boolean_fields)
             data.update(body)
 
             try:
-                model = self._arg_model(**data)
+                model = self._arg_model.model_validate(data)
             except PydanticValidationError as e:
-                parts = []
-                for err in e.errors():
-                    loc = ".".join(str(p) for p in err["loc"]) or "body"
-                    parts.append(f"{loc}: {err['msg']}")
-                raise ValidationError("; ".join(parts))
+                raise argument_validation_error(e) from None
 
             # dict(model): the already-validated values, without model_dump()'s
             # per-request recursive copy of every container.
@@ -355,6 +393,15 @@ class Endpoint(ABC):
             self._arg_model = build_arg_model(self.mcp_definition)
         except Exception as e:
             raise ValueError(f"{cls.__name__}: invalid mcp_definition — {e}") from e
+        # Parameters whose query-string "true"/"false" become bools (see
+        # query_arguments).
+        self._boolean_fields = frozenset(
+            name
+            for name, prop in (
+                (self.mcp_definition.get("parameters") or {}).get("properties") or {}
+            ).items()
+            if isinstance(prop, dict) and prop.get("type") == "boolean"
+        )
 
         # Every declared property reaches the callback (defaults included,
         # matching the MCP transport), so the signature must accept them all —

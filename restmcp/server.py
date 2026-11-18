@@ -119,7 +119,8 @@ class Server:
         'Task group is not initialized' error you get when mounting MCP onto the
         FastAPI app directly. The MCP endpoint is served exactly at `mcp_path`
         (clients connect there). `transport`: 'http' (Streamable HTTP, the
-        fastmcp 3.x default), 'streamable-http' (fastmcp 2.x alias) or 'sse'.
+        default), 'streamable-http' (an alias of 'http' fastmcp still accepts)
+        or 'sse'.
 
         When AUTH_API_KEY is set, the whole app is wrapped in AuthMiddleware,
         protecting REST and the mounted MCP; `public_paths` stay open (the REST

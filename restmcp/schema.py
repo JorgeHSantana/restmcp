@@ -2,12 +2,13 @@ import inspect
 import re
 import types
 import typing
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    StrictBool,
     TypeAdapter,
     ValidationError as PydanticValidationError,
     create_model,
@@ -28,13 +29,61 @@ def _reject_bool(v):
     return v
 
 
+def _reject_non_bool(v):
+    """Reject a non-bool number where a boolean enum member is expected."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        raise ValueError("expected a boolean, got a number")
+    return v
+
+
+def _int_enum_input(v):
+    """Pre-validation for an enum with integer members.
+
+    pydantic matches ``Literal[1, 2]`` by equality, so ``True`` would pass as
+    ``1``; the anti-bool guard applies here as on plain integers. A numeric
+    string is turned into an int first, so an integer enum accepts what a plain
+    integer accepts (``"2"``, which is also how a query string carries it).
+    """
+    v = _reject_bool(v)
+    if isinstance(v, str):
+        try:
+            return int(v.strip())
+        except ValueError:
+            return v
+    return v
+
+
+def _enum_type(prop: dict):
+    """``Literal[...]`` for a property with a usable ``enum``, else None.
+
+    Usable means a non-empty list of str/int/bool/None members (what
+    ``typing.Literal`` can carry). Any other enum (floats, objects) is left as
+    plain JSON Schema: published, not enforced — the pre-0.8.0 behaviour.
+    """
+    values = prop.get("enum")
+    if not isinstance(values, list) or not values:
+        return None
+    if not all(v is None or isinstance(v, (str, int)) for v in values):
+        return None
+    literal = Literal[tuple(values)]
+    if any(isinstance(v, int) and not isinstance(v, bool) for v in values):
+        return Annotated[literal, BeforeValidator(_int_enum_input)]
+    if any(isinstance(v, bool) for v in values):
+        # Literal[True] would take 1 (1 == True): strict like a plain boolean
+        return Annotated[literal, BeforeValidator(_reject_non_bool)]
+    return literal
+
+
 def python_type_for(prop: dict):
     """Map one mcp_definition property schema to a Python type annotation.
 
+    enum    -> Literal[<members>]  (str/int/bool/None members; integer members
+               get the anti-bool guard and numeric-string coercion, boolean
+               members refuse numbers; other enums fall through to "type")
     integer -> Annotated[int,   BeforeValidator(_reject_bool)]
     number  -> Annotated[float, BeforeValidator(_reject_bool)]
     string  -> str
-    boolean -> bool
+    boolean -> StrictBool  (JSON true/false only — no "yes", "true", 1, 0)
     array   -> List[<item type via python_type_for>]   (default item: str)
     object  -> Dict[str, Any]
     unknown / missing type -> str
@@ -44,13 +93,16 @@ def python_type_for(prop: dict):
     the JSON-schema-type -> Python-type mapping, shared by the REST model
     builder (build_arg_model) and the MCP signature builder (mcp.py).
     """
+    enum = _enum_type(prop)
+    if enum is not None:
+        return enum
     t = prop.get("type")
     if t == "integer":
         return Annotated[int, BeforeValidator(_reject_bool)]
     if t == "number":
         return Annotated[float, BeforeValidator(_reject_bool)]
     if t == "boolean":
-        return bool
+        return StrictBool
     if t == "array":
         item = python_type_for(prop.get("items") or {"type": "string"})
         return List[item]
@@ -176,10 +228,28 @@ def schema_for_annotation(annotation) -> dict:
         return {"type": "array", "items": item}
     if origin in (dict, typing.Dict) or annotation is dict:
         return {"type": "object"}
+    if origin is Literal:
+        return _literal_schema(typing.get_args(annotation))
 
     if annotation in _PRIMITIVES:
         return {"type": _PRIMITIVES[annotation]}
     return {"type": "string"}
+
+
+def _literal_schema(values: tuple) -> dict:
+    """``Literal["a", "b"]`` -> ``{"type": "string", "enum": ["a", "b"]}``.
+
+    ``type`` is set when every member shares one JSON type (string, integer or
+    boolean); a mixed literal publishes the bare ``enum``. Either way
+    python_type_for turns the enum back into the same Literal for validation.
+    """
+    kinds = {bool: "boolean", int: "integer", str: "string"}
+    types_ = {kinds.get(type(v)) for v in values}
+    schema: dict = {}
+    if len(types_) == 1 and None not in types_:
+        schema["type"] = types_.pop()
+    schema["enum"] = list(values)
+    return schema
 
 
 def _unwrap_annotated(annotation):
