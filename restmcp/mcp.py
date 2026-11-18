@@ -20,9 +20,22 @@ class McpApp:
     def build(self, url_handlers: List[Any]):
         from fastmcp import FastMCP
 
+        for handler in url_handlers:
+            # Fail closed: without the argument model the validation
+            # middleware could not run, and fastmcp's raw pydantic text (which
+            # echoes the rejected value) would reach the client.
+            if getattr(handler, "_arg_model", None) is None:
+                name = (getattr(handler, "mcp_definition", None) or {}).get("name")
+                raise TypeError(
+                    f"MCP tool {name!r}: handler has no _arg_model — restmcp "
+                    f"validates tools/call arguments with the endpoint's argument "
+                    f"model; register tools through Endpoint."
+                )
         mcp = FastMCP("restmcp")
         for handler in url_handlers:
             self._register_tool(mcp, handler)
+        mcp.add_middleware(_argument_validation_middleware(
+            {h.mcp_definition["name"]: h for h in url_handlers}))
         return mcp
 
     def _register_tool(self, mcp: Any, handler: Any):
@@ -39,7 +52,6 @@ class McpApp:
         )
         from restmcp.exceptions import RestMCPException
 
-        ToolResult, TextContent = _tool_result_types()
         passthrough = _fastmcp_passthrough_errors()
 
         def_dict = handler.mcp_definition
@@ -76,13 +88,6 @@ class McpApp:
                     )
                 )
 
-        def error_result(envelope: dict):
-            return ToolResult(
-                content=[TextContent(type="text", text=envelope["error"])],
-                structured_content=envelope,
-                is_error=True,
-            )
-
         async def tool_wrapper(**kwargs):
             # The principal of THIS tools/call (see _call_principal), published
             # in current_auth for the duration of the call so callbacks reading
@@ -98,7 +103,7 @@ class McpApp:
                 # sync callbacks run in a threadpool (see run_callback).
                 return await run_callback(handler.callback, **kwargs)
             except RestMCPException as e:
-                return error_result(error_envelope(e, name))
+                return _error_result(error_envelope(e, name))
             except passthrough:
                 # fastmcp's / the MCP SDK's own exceptions (ToolError raised on
                 # purpose, protocol errors) keep fastmcp's handling untouched.
@@ -108,7 +113,7 @@ class McpApp:
                 # client. fastmcp would otherwise echo str(e) (its
                 # mask_error_details defaults to False).
                 _logger.error("Unhandled error in tool %r", name, exc_info=True)
-                return error_result(internal_error_envelope(name))
+                return _error_result(internal_error_envelope(name))
             finally:
                 if token is not None:
                     current_auth.reset(token)
@@ -147,6 +152,70 @@ def _call_principal(current_auth: Any) -> dict | None:
         return current_auth.get()
     state = request.scope.get("state") or {}
     return state.get("auth")
+
+
+def _error_result(envelope: dict):
+    """An MCP ``isError`` result carrying the shared error envelope as
+    ``structuredContent`` (and its message as the text content)."""
+    ToolResult, TextContent = _tool_result_types()
+    return ToolResult(
+        content=[TextContent(type="text", text=envelope["error"])],
+        structured_content=envelope,
+        is_error=True,
+    )
+
+
+def _argument_validation_middleware(handlers: dict):
+    """fastmcp middleware that validates tools/call arguments the restmcp way.
+
+    fastmcp validates arguments against the wrapper's signature BEFORE the
+    wrapper runs, and on failure answers ``isError`` with pydantic's raw text:
+    no envelope, no ``code``, and the rejected value echoed back
+    (``input_value='...'``). This middleware runs first and validates with the
+    endpoint's own argument model — the very model REST uses, built from the
+    same field_spec_for as the signature — so an invalid call gets the shared
+    envelope with ``code: "validation_error"`` and the same message as REST.
+    Valid arguments go on unchanged (fastmcp then validates them again, with
+    the same types, and calls the wrapper).
+
+    The scope is checked FIRST, as REST does: an under-scoped key gets
+    ``forbidden_scope`` whatever its arguments. Same principal source as the
+    wrapper (_call_principal), whose own check stays as a second gate; with
+    auth disabled ``_enforce_scope`` is a no-op.
+    """
+    from fastmcp.server.middleware import Middleware
+    from pydantic import ValidationError as PydanticValidationError
+
+    from restmcp.auth import current_auth
+    from restmcp.endpoint import (
+        argument_validation_error,
+        error_envelope,
+        internal_error_envelope,
+    )
+    from restmcp.exceptions import RestMCPException
+
+    class ArgumentValidation(Middleware):
+        async def on_call_tool(self, context, call_next):
+            name = context.message.name
+            handler = handlers.get(name)
+            if handler is not None:
+                try:
+                    handler._enforce_scope(_call_principal(current_auth))
+                    handler._arg_model.model_validate(context.message.arguments or {})
+                except PydanticValidationError as e:
+                    return _error_result(
+                        error_envelope(argument_validation_error(e), name))
+                except RestMCPException as e:
+                    return _error_result(error_envelope(e, name))
+                except Exception:
+                    # e.g. a custom auth layer's principal without "scopes":
+                    # same answer the wrapper gave in 0.7 — traceback to the
+                    # log, generic envelope to the client, callback not run.
+                    _logger.error("Unhandled error in tool %r", name, exc_info=True)
+                    return _error_result(internal_error_envelope(name))
+            return await call_next(context)
+
+    return ArgumentValidation()
 
 
 def _tool_result_types():

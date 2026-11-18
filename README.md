@@ -73,6 +73,37 @@ change lands there under *Unreleased* and ships with the version bump.
 
 ---
 
+## Behaviour changes in 0.8.0
+
+Input handling is stricter on **both** transports (REST and MCP `tools/call`):
+
+- **Booleans are strict.** A `bool` parameter accepts only JSON `true`/`false`;
+  `"true"`, `"yes"`, `"on"`, `1`, `0` are now rejected (they were coerced). In a
+  REST query string, where nothing is typed, `true`/`false` in any case
+  (`?flag=true`, `?flag=True`, `?flag=FALSE`) are the only accepted spellings;
+  `?flag=1`, `?flag=yes`, `?flag=on` are rejected. Strictness is for what the
+  client sends: declared defaults keep 0.7's lax rules (`flag: bool = 0` still
+  registers, as `False`).
+- **`Literal[...]` becomes `enum`.** `Literal["a", "b"]` (also `Optional[...]`,
+  with a default, and `list[Literal[...]]`) is published with `enum` in
+  `tools/list`, `/mcp/tools` and OpenAPI, and a value outside the set is
+  rejected. An `enum` in a hand-written `mcp_definition` is enforced too (it was
+  only published); if its `default` is outside the set (also inside `items`),
+  registration emits a `UserWarning` and keeps the default, while a `Literal`
+  whose default is not a member raises `TypeError` at class definition. An
+  untyped hand-written enum (`{"enum": [1, 2]}`) now hands the callback the
+  matched member (an int for `"1"`), where 0.7 handed a string. Under
+  `-W error` these warnings become import errors.
+- **Rejected arguments carry `code: "validation_error"`.** Still HTTP 400 with
+  `error_type: "ValidationError"` (the `code` was `null`); over MCP the same
+  envelope is the `structuredContent` of the `isError` result, which used to be
+  fastmcp's raw pydantic text with the rejected value echoed back. The message
+  names the parameter, never the rejected value.
+- **MCP checks the scope before the arguments**, like REST: a key without the
+  tool's `required_scope` gets `forbidden_scope` whatever it sends.
+
+---
+
 ## Breaking changes in 0.2.0
 
 Definition errors now fail at **registration (import time)** instead of per-request, always naming the endpoint class or tool:
@@ -81,7 +112,7 @@ Definition errors now fail at **registration (import time)** instead of per-requ
 - A declared `default` that does not match its declared type is rejected (defaults are now validated and coerced at registration).
 - The callback signature must accept every declared property (defaults included) — on 0.1.x this worked on REST and broke only on MCP.
 
-Runtime changes: unknown query-string parameters are now ignored (previously HTTP 400); REST and MCP now validate identically via one shared pydantic model, so HTTP 400 messages are pydantic-style (e.g. "Extra inputs are not permitted"); explicit JSON `null` is accepted only when the property's default is `null`; pydantic-lax boolean inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`) are accepted.
+Runtime changes: unknown query-string parameters are now ignored (previously HTTP 400); REST and MCP now validate identically via one shared pydantic model, so HTTP 400 messages are pydantic-style (e.g. "Extra inputs are not permitted"); explicit JSON `null` is accepted only when the property's default is `null`; pydantic-lax boolean inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`) are accepted (until 0.7.x — strict since 0.8.0, see above).
 
 ---
 
@@ -268,6 +299,28 @@ drift:
   undeclared — the envelope alone already types the skeleton). Errors are
   documented once, under `default`, with the error envelope.
 
+**Parameter types and validation:** each callback annotation becomes one JSON
+Schema property, and REST and MCP validate it with the same pydantic model:
+
+| Annotation | Schema | Accepts |
+|---|---|---|
+| `str` | `{"type": "string"}` | strings only (no number/boolean coercion) |
+| `int` | `{"type": "integer"}` | integers, integral floats, numeric strings; never a boolean |
+| `float` | `{"type": "number"}` | numbers, numeric strings; never a boolean |
+| `bool` | `{"type": "boolean"}` | JSON `true`/`false` only (0.8.0+); query string: `true`/`false`, any case |
+| `Literal["a", "b"]` | `{"type": "string", "enum": ["a", "b"]}` | a member of the set (0.8.0+), validated by the member type first: `Literal[1, 2]` takes `"2"`/`2.0` (as `int` does), never a boolean; `Literal[1.5, 2.5]` is `type: number` |
+| hand-written `{"enum": [1, 2]}` (no `type`) | as declared | the matched member (0.8.0+): `"1"`, `1`, `1.0` all reach the callback as the int `1` — 0.7 passed the string `"1"` and rejected `1`; declare `"type": "string"` with string members to keep strings |
+| `list[T]` | `{"type": "array", "items": <T>}` | a JSON array, each item validated as `T` |
+| `dict` | `{"type": "object"}` | a JSON object |
+
+`Optional[T]` / a default of `None` also accepts `null`; a non-`None` default is
+coerced at registration with 0.7's lax rules (strictness applies to client
+input, not to what the author declared). `Union[Literal["a"], Literal["b"]]` is
+treated as `Literal["a", "b"]`; a mixed `Literal[True, "auto"]` publishes a bare
+`enum` and its query-string `true`/`false` become booleans. A missing required
+parameter, an unknown one, or a value of the wrong type answers HTTP 400 (REST)
+/ `isError` (MCP) with `code: "validation_error"`.
+
 ```python
 class GetProductEndpoint(Endpoint):
     mcp_definition = {
@@ -393,6 +446,16 @@ blocking calls inside an `async def` callback.
 endpoint is resolved (e.g. the 401 from auth, which carries
 `code: "invalid_api_key"`).
 
+Arguments the framework rejects (wrong type, missing required, unknown
+parameter, value outside an `enum`, non-boolean for a boolean, body that is not
+a JSON object) answer HTTP 400 with `code: "validation_error"` (0.8.0+; `null`
+before). The message names each parameter and what it expects — never the
+rejected value (an unknown parameter's name is cut to 64 characters):
+
+```json
+{ "tool": "cancel_line", "error": "confirm: Input should be a valid boolean", "success": false, "error_type": "ValidationError", "code": "validation_error" }
+```
+
 ---
 
 ### `Server`
@@ -468,7 +531,7 @@ mcp = Server.get_instance().get_mcp()
 - **Typed parameters:** a parameter declared as `{"type": "string", "format": "date-time"}` arrives in the callback as a **string** — coerce to `datetime` if needed.
 - **Caching:** wrap an expensive Service method with `@cached_method(ttl=seconds, maxsize=128)` — the cache key is built from the arguments (via `repr`), so it works even with `list`/`dict` args. The store is bounded (`maxsize`) and self-purging (TTL), so it is safe in long-running processes. Cache plain-data arguments, not rich objects.
 - **Folders vs suffixes:** only **class suffixes** are enforced (`*Entity`, `*Repository`, `*Service`, `*Endpoint`, `*DataSource`); folder names are free.
-- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it). Installing fastmcp also pulls in `starlette`.
+- **Dependencies:** 0.8.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it). Installing fastmcp also pulls in `starlette`.
 
 A complete, runnable server using all of the above lives in [examples/telemetry/](examples/telemetry/) — no database required.
 
@@ -485,6 +548,11 @@ raise ValidationError("product_id is required")  # → HTTP 400
 raise NotFoundError("Product not found")          # → HTTP 404
 raise ValidationError("token expired", code="session_expired")  # → 400, "code" in the envelope (0.7.0+)
 ```
+
+`"validation_error"` is the code the framework itself sets when it rejects the
+arguments; a `ValidationError` raised by your callback keeps the `code` you
+give it (`null` by default), so clients can tell "bad input shape" from a
+business rule.
 
 The base class and the auth errors are imported from `restmcp.exceptions` (not
 re-exported by `restmcp`); use the base class for any other status with a `code`:
@@ -542,13 +610,19 @@ answers `isError: true` with the same error envelope as `structuredContent`
 workaround — keep it for endpoints that make no sense as a tool. The secret
 itself never propagates.
 
-Order of checks: over MCP, fastmcp validates the arguments before the scope
-check, so a key without the scope that sends invalid arguments gets a
-validation error rather than `forbidden_scope` (the callback runs in neither
-case), while REST checks the scope first.
+Order of checks (0.8.0+): the scope comes first on both transports, so a key
+without the scope gets `forbidden_scope` whatever its arguments; a key with
+the scope then gets `code: "validation_error"` for invalid arguments. (Until
+0.7.x MCP validated the arguments first.) Over MCP, valid arguments are
+validated twice — by restmcp's middleware, then by fastmcp with the same types
+— at negligible cost. Protocol-level errors the MCP SDK raises before a tool
+is resolved (e.g. a malformed JSON-RPC message or batch) are outside restmcp
+and may quote the request.
 
 Over MCP every `RestMCPException` becomes `isError: true` with the shared
-envelope (`tool, error, success, error_type, code`) as `structuredContent`;
+envelope (`tool, error, success, error_type, code`) as `structuredContent` —
+and so do invalid arguments (0.8.0+, `code: "validation_error"`, same message
+as REST);
 fastmcp's own exceptions (e.g. a deliberate `ToolError`) keep fastmcp's
 handling; any other exception is logged and reaches the client as the generic
 `InternalServerError` envelope, exactly as on REST.

@@ -165,7 +165,9 @@ def test_python_type_for_primitives():
     from restmcp.schema import python_type_for
 
     assert python_type_for({"type": "string"}) is str
-    assert python_type_for({"type": "boolean"}) is bool
+    # strict since 0.8.0: StrictBool, not bool (no "yes"/"true"/1/0 coercion)
+    from pydantic import StrictBool
+    assert python_type_for({"type": "boolean"}) is StrictBool
     # integer/number carry the anti-bool BeforeValidator, so they are Annotated
     int_ann = python_type_for({"type": "integer"})
     assert get_args(int_ann)[0] is int

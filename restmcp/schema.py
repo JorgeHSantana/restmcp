@@ -2,16 +2,21 @@ import inspect
 import re
 import types
 import typing
-from typing import Annotated, Any, Dict, List, Optional
+import warnings
+from dataclasses import dataclass
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    StrictBool,
     TypeAdapter,
     ValidationError as PydanticValidationError,
     create_model,
 )
+from pydantic_core import PydanticCustomError
 
 _PRIMITIVES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -28,13 +33,130 @@ def _reject_bool(v):
     return v
 
 
-def python_type_for(prop: dict):
+_ENUM_MEMBER_TYPES = (str, int, float, type(None))  # bool is an int
+
+
+_NO_MATCH = object()
+
+
+def _match(v, values):
+    """The member of ``values`` equal to ``v`` — never a bool for a number or a
+    number for a bool (``1 == True`` in Python, not in JSON) — else _NO_MATCH."""
+    for m in values:
+        if v == m and isinstance(v, bool) == isinstance(m, bool):
+            return m
+    return _NO_MATCH
+
+
+def _is_member(v, values) -> bool:
+    return _match(v, values) is not _NO_MATCH
+
+
+@dataclass(frozen=True)
+class _EnumJsonSchema:
+    """Adds ``enum`` to the JSON Schema pydantic derives for the base type
+    (``{"type": "string"}`` -> ``{"type": "string", "enum": [...]}``) instead
+    of replacing it, so field-level ``description`` and ``default`` survive
+    in the schema fastmcp publishes in ``tools/list``."""
+
+    values: tuple
+
+    def __get_pydantic_json_schema__(self, core_schema, handler):
+        schema = handler(core_schema)
+        schema["enum"] = list(self.values)
+        return schema
+
+
+def _enum_error(values) -> PydanticCustomError:
+    """pydantic's own Literal wording (``Input should be 'a' or 'b'``): names
+    the allowed members, never the rejected input."""
+    shown = [repr(v) for v in values]
+    expected = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} or {shown[-1]}"
+    return PydanticCustomError("literal_error", f"Input should be {expected}")
+
+
+def _usable_enum(prop: dict) -> list | None:
+    """The property's enum when restmcp can enforce it, else None.
+
+    Usable means a non-empty list of str/int/float/bool/null members. Any
+    other enum (objects, lists) is left as plain JSON Schema: published, not
+    enforced — the pre-0.8.0 behaviour.
+    """
+    values = prop.get("enum")
+    if not isinstance(values, list) or not values:
+        return None
+    if not all(isinstance(v, _ENUM_MEMBER_TYPES) for v in values):
+        return None
+    return values
+
+
+def _enum_type(prop: dict, values: list, *, strict: bool):
+    """Annotation enforcing ``values`` on top of the property's own type.
+
+    With a declared JSON ``type`` the value is validated by that type first —
+    so the callback receives the same Python type as in 0.7 (``"2.0"`` -> 2
+    for an integer enum, 1 -> 1.0 for a number enum) — and must then be a
+    member. Without one (a mixed ``Literal["auto", True]``, or a hand-written
+    untyped enum), the callback gets the matched member itself (``1.0`` -> 1);
+    a string that is not a member is tried as a number (lax int/float rules)
+    and passes if THAT matches a member. ``_EnumJsonSchema`` keeps ``enum`` in
+    the schema fastmcp derives for ``tools/list``.
+    """
+    def check_member(v):
+        if not _is_member(v, values):
+            raise _enum_error(values)
+        return v
+
+    enum_schema = _EnumJsonSchema(tuple(values))
+    t = prop.get("type")
+    if t in ("string", "integer", "number", "boolean"):
+        base = _scalar_type(t, strict=strict)
+        return Annotated[base, AfterValidator(check_member), enum_schema]
+
+    numeric = [m for m in values
+               if isinstance(m, (int, float)) and not isinstance(m, bool)]
+
+    def untyped_member(v):
+        member = _match(v, values)
+        if member is not _NO_MATCH:
+            return member
+        if isinstance(v, str) and numeric:
+            for target in (int, float):
+                try:
+                    n = TypeAdapter(Annotated[target, BeforeValidator(_reject_bool)]) \
+                        .validate_python(v)
+                except PydanticValidationError:
+                    continue
+                member = _match(n, values)
+                if member is not _NO_MATCH:
+                    return member
+        raise _enum_error(values)
+
+    return Annotated[Any, BeforeValidator(untyped_member), enum_schema]
+
+
+def _scalar_type(t: str, *, strict: bool = True):
+    """Python type for a scalar JSON type. ``strict=False`` is the 0.7 lax
+    boolean, used only to coerce DEFAULTS the author declared."""
+    if t == "integer":
+        return Annotated[int, BeforeValidator(_reject_bool)]
+    if t == "number":
+        return Annotated[float, BeforeValidator(_reject_bool)]
+    if t == "boolean":
+        return StrictBool if strict else bool
+    return str
+
+
+def python_type_for(prop: dict, *, strict: bool = True):
     """Map one mcp_definition property schema to a Python type annotation.
 
+    enum    -> the property's type + a membership check (see _enum_type);
+               str/int/float/bool/None members, other enums fall through
     integer -> Annotated[int,   BeforeValidator(_reject_bool)]
     number  -> Annotated[float, BeforeValidator(_reject_bool)]
     string  -> str
-    boolean -> bool
+    boolean -> StrictBool  (JSON true/false only — no "yes", "true", 1, 0);
+               plain lax ``bool`` when ``strict=False`` (defaults only)
     array   -> List[<item type via python_type_for>]   (default item: str)
     object  -> Dict[str, Any]
     unknown / missing type -> str
@@ -44,15 +166,14 @@ def python_type_for(prop: dict):
     the JSON-schema-type -> Python-type mapping, shared by the REST model
     builder (build_arg_model) and the MCP signature builder (mcp.py).
     """
+    values = _usable_enum(prop)
+    if values is not None:
+        return _enum_type(prop, values, strict=strict)
     t = prop.get("type")
-    if t == "integer":
-        return Annotated[int, BeforeValidator(_reject_bool)]
-    if t == "number":
-        return Annotated[float, BeforeValidator(_reject_bool)]
-    if t == "boolean":
-        return bool
+    if t in ("integer", "number", "boolean"):
+        return _scalar_type(t, strict=strict)
     if t == "array":
-        item = python_type_for(prop.get("items") or {"type": "string"})
+        item = python_type_for(prop.get("items") or {"type": "string"}, strict=strict)
         return List[item]
     if t == "object":
         return Dict[str, Any]
@@ -83,7 +204,85 @@ def check_property_name(context: str, name: str) -> None:
         )
 
 
-def field_spec_for(name: str, prop: dict) -> tuple[Any, Any]:
+def _coerce_default(name: str, prop: dict, tool: str | None):
+    """Validate and coerce a declared (non-None) default — leniently.
+
+    Strictness is for what a CLIENT sends; a default is the author's
+    declaration, and a dependency bump must not stop an app from importing.
+    So a default is first tried against the request annotation, then against
+    the property's type with 0.7's lax rules (``flag: bool = 0``,
+    ``"default": "false"``). A default that fits the type but sits outside a
+    hand-written ``enum`` is kept with a warning (``tool`` names the
+    endpoint; ``None`` silences it — the MCP builder re-derives the same spec
+    the REST model already warned about). A default that does not fit the
+    type at all raises TypeError, as in 0.7.
+    """
+    default = prop["default"]
+    strict_adapter = TypeAdapter(python_type_for(prop))
+    try:
+        return strict_adapter.validate_python(default)
+    except PydanticValidationError:
+        pass
+    try:
+        value = TypeAdapter(python_type_for(_without_enums(prop), strict=False)) \
+            .validate_python(default)
+    except PydanticValidationError as e:
+        raise TypeError(
+            f"property {name!r}: default {default!r} does not match its declared type"
+        ) from e
+    try:
+        # lax-coerced but still refused by the request type: it is outside an
+        # enum (top level or in "items") — e.g. not a bool coerced to False
+        strict_adapter.validate_python(value)
+    except PydanticValidationError:
+        if tool is not None:
+            warnings.warn(
+                f"{tool}: parameter {name!r} declares default {default!r}, which "
+                f"is outside its enum; the default is kept when the client "
+                f"omits {name!r}, but a client cannot send it.",
+                UserWarning,
+                stacklevel=2,
+            )
+    return value
+
+
+def _without_enums(prop: dict) -> dict:
+    """``prop`` with every ``enum`` removed, ``items`` included (recursively)."""
+    plain = {k: v for k, v in prop.items() if k != "enum"}
+    if isinstance(plain.get("items"), dict):
+        plain["items"] = _without_enums(plain["items"])
+    return plain
+
+
+def _member_fits(member, t: str) -> bool:
+    if t == "string":
+        return isinstance(member, str)
+    if t == "boolean":
+        return isinstance(member, bool)
+    if isinstance(member, bool) or not isinstance(member, (int, float)):
+        return False
+    return t == "number" or isinstance(member, int) or float(member).is_integer()
+
+
+def _warn_unreachable_enum(tool: str, name: str, prop: dict) -> None:
+    """Warn when a typed enum has no member of its declared type (e.g.
+    ``{"type": "string", "enum": [1, 2]}``): no client value can pass, so the
+    tool is uncallable with that parameter. Checks ``items`` too."""
+    values = _usable_enum(prop)
+    t = prop.get("type")
+    if values is not None and t in ("string", "integer", "number", "boolean") \
+            and not any(_member_fits(m, t) for m in values):
+        warnings.warn(
+            f"{tool}: parameter {name!r} declares type {t!r} but none of its "
+            f"enum members {values!r} is a {t}; no client value can pass.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if isinstance(prop.get("items"), dict):
+        _warn_unreachable_enum(tool, name, prop["items"])
+
+
+def field_spec_for(name: str, prop: dict, tool: str | None = None) -> tuple[Any, Any]:
     """(annotation, default) for one mcp_definition property.
 
     Single source of truth for the optionality convention, shared by
@@ -91,22 +290,20 @@ def field_spec_for(name: str, prop: dict) -> tuple[Any, Any]:
     - no "default" key    -> required (returned default is Ellipsis)
     - "default": None     -> Optional[annotation], default None (explicit
       null accepted)
-    - "default": <value>  -> validated and coerced through the property's own
-      annotation at registration time, so the callback sees the same type
-      whether the client sent the value or omitted it.
+    - "default": <value>  -> validated and coerced at registration time (see
+      _coerce_default: lax for the author, strict only for clients), so the
+      callback sees the same type whether the client sent the value or
+      omitted it.
     """
+    if tool is not None:
+        _warn_unreachable_enum(tool, name, prop)
     annotation = python_type_for(prop)
     if "default" not in prop:
         return annotation, ...
     default = prop["default"]
     if default is None:
         return Optional[annotation], None
-    try:
-        return annotation, TypeAdapter(annotation).validate_python(default)
-    except PydanticValidationError as e:
-        raise TypeError(
-            f"property {name!r}: default {default!r} does not match its declared type"
-        ) from e
+    return annotation, _coerce_default(name, prop, tool)
 
 
 def build_arg_model(mcp_definition: dict) -> type[BaseModel]:
@@ -124,7 +321,7 @@ def build_arg_model(mcp_definition: dict) -> type[BaseModel]:
     for name, prop in props.items():
         check_property_name(tool, name)
         try:
-            fields[name] = field_spec_for(name, prop)
+            fields[name] = field_spec_for(name, prop, tool)
         except TypeError as e:
             raise TypeError(f"{tool}: {e}") from e
     model = create_model(
@@ -176,10 +373,47 @@ def schema_for_annotation(annotation) -> dict:
         return {"type": "array", "items": item}
     if origin in (dict, typing.Dict) or annotation is dict:
         return {"type": "object"}
+    literal_values = _literal_values(annotation)
+    if literal_values is not None:
+        return _literal_schema(literal_values)
 
     if annotation in _PRIMITIVES:
         return {"type": _PRIMITIVES[annotation]}
     return {"type": "string"}
+
+
+def _literal_values(annotation) -> tuple | None:
+    """Members of ``Literal[...]`` — also of ``Union[Literal["a"],
+    Literal["b"]]`` (flattened in order, duplicates dropped) — else None."""
+    origin = typing.get_origin(annotation)
+    if origin is Literal:
+        return typing.get_args(annotation)
+    if origin is typing.Union or origin is getattr(types, "UnionType", ()):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if args and all(typing.get_origin(a) is Literal for a in args):
+            values: list = []
+            for a in args:
+                values += [v for v in typing.get_args(a) if not _is_member(v, values)]
+            return tuple(values)
+    return None
+
+
+def _literal_schema(values: tuple) -> dict:
+    """``Literal["a", "b"]`` -> ``{"type": "string", "enum": ["a", "b"]}``.
+
+    ``type`` is set when every member shares one JSON type (string, integer,
+    number or boolean; ints mixed with floats are ``number``); a mixed literal
+    publishes the bare ``enum``. python_type_for enforces the enum back.
+    """
+    kinds = {bool: "boolean", int: "integer", float: "number", str: "string"}
+    types_ = {kinds.get(type(v)) for v in values}
+    if types_ == {"integer", "number"}:
+        types_ = {"number"}
+    schema: dict = {}
+    if len(types_) == 1 and None not in types_:
+        schema["type"] = types_.pop()
+    schema["enum"] = list(values)
+    return schema
 
 
 def _unwrap_annotated(annotation):
@@ -253,6 +487,16 @@ def build_parameters(callback) -> dict:
         if description:
             schema["description"] = description
         if param.default is not inspect.Parameter.empty:
+            members = _literal_values(base)
+            if (members is not None and param.default is not None
+                    and not _is_member(param.default, members)):
+                # An annotation contradicting its own default is the author's
+                # type error — unlike a hand-written enum, which only warns
+                # (see _coerce_default).
+                raise TypeError(
+                    f"parameter {pname!r}: default {param.default!r} is not one "
+                    f"of its Literal members {list(members)!r}"
+                )
             schema["default"] = param.default
 
         properties[pname] = schema
@@ -296,8 +540,12 @@ def build_mcp_definition(cls) -> dict:
     callback = getattr(cls, "callback", None)
     name = tool_name_from_class(cls)
     description = _docstring(callback) or _docstring(cls) or name
+    try:
+        parameters = build_parameters(callback) if callback else {"properties": {}}
+    except TypeError as e:
+        raise TypeError(f"{cls.__name__}: {e}") from e
     return {
         "name": name,
         "description": description,
-        "parameters": build_parameters(callback) if callback else {"properties": {}},
+        "parameters": parameters,
     }

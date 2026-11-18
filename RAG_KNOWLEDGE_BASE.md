@@ -18,7 +18,7 @@ Guidance for the agent and for whoever maintains this file:
 - **Source of truth.** Answer questions about restmcp using the content below. When a question is not covered here, say so instead of guessing.
 - **Self-contained sections.** Each numbered section is written to stand on its own, so a chunk retrieved in isolation still carries enough context to be useful.
 - **Concrete examples.** Most concepts are paired with runnable code examples and, where relevant, the exact inferred output. Prefer citing these examples when explaining a concept.
-- **Version-scoped.** Everything here describes restmcp at version 0.7.0 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
+- **Version-scoped.** Everything here describes restmcp at version 0.8.0 specifically: schema inference rules, the required `Returns:` docstring section, the tool catalog, and the layered architecture. If the framework version in use differs, treat these details as potentially outdated and verify against the source code.
 
 ---
 
@@ -105,7 +105,7 @@ Dependencies installed automatically:
 |---|---|---|
 | fastapi | >= 0.100 | REST layer (HTTP routes, validation, CORS). |
 | uvicorn[standard] | >= 0.20 | ASGI server to run the application. |
-| fastmcp | >= 3.4 | MCP protocol implementation. 0.7.0's test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (3.0–3.3 and 2.x fail it). |
+| fastmcp | >= 3.4 | MCP protocol implementation. 0.8.0's test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (3.0–3.3 and 2.x fail it). |
 | pydantic | >= 2.0 | Data models (Entity) and validation. |
 | click | >= 8.0 | CLI (`restmcp new`). |
 
@@ -378,11 +378,16 @@ Python-to-JSON-Schema type mapping rules:
 | `int` | `{"type": "integer"}` |
 | `float` | `{"type": "number"}` |
 | `bool` | `{"type": "boolean"}` |
+| `Literal["a", "b"]` | `{"type": "string", "enum": ["a", "b"]}` (0.8.0+) |
+| `Literal[1, 2]` | `{"type": "integer", "enum": [1, 2]}` (0.8.0+) |
+| `Literal[1.5, 2.5]` | `{"type": "number", "enum": [1.5, 2.5]}` (0.8.0+) |
+| `Union[Literal["a"], Literal["b"]]` | same as `Literal["a", "b"]` (0.8.0+) |
 | `list[T]` / `List[T]` | `{"type": "array", "items": <schema of T>}` |
 | `dict` / `Dict` | `{"type": "object"}` |
 | No annotation or unknown type | `{"type": "string"}` (permissive fallback) |
 
 Additional behavior:
+- `Literal[...]` (0.8.0+) becomes `enum` with the members in declaration order; `type` is set when every member shares one JSON type (a mixed literal gets the bare `enum`). It composes: `Optional[Literal["x", "y"]] = None` gives `{"type": "string", "enum": ["x", "y"], "default": None}` and `list[Literal["p", "q"]]` gives `{"type": "array", "items": {"type": "string", "enum": ["p", "q"]}}`. Until 0.7.x a `Literal` was reduced to `{"type": "string"}`. A `Literal` default that is not a member (`mode: Literal["a", "b"] = "c"`) raises `TypeError` at class definition.
 - `Annotated[T, "text"]` extracts `T` as the type and the first string metadata item as the `description`.
 - `Optional[X]` (or `X | None`) is reduced to `X` for schema purposes.
 - A parameter with a default value carries that value under the `"default"` key; without a default, it is treated as required (no `"default"` key).
@@ -448,7 +453,7 @@ Error:
 
 `code` (0.7.0+) is always present in the error envelope: the exception's machine-readable `code` (`RestMCPException(message, status_code, code=None)`), or `null` when it defines none. `tool` is `null` when the error happens before an endpoint is resolved — the framework's 401 (`error_type: UnauthorizedError`, `code: "invalid_api_key"`), from `AuthMiddleware` and from the REST auth dependency alike. The same envelope is the `structuredContent` of an MCP `isError` result.
 
-REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax — `"5"`, `5.0` and `"5.0"` all become integer `5`, and boolean fields accept pydantic's lax inputs (`1`/`0`, `"on"`/`"off"`, `"yes"`/`"no"`, `"true"`/`"false"`) — with one deliberate guard: a boolean is rejected where a number is expected. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. A body that is present but is not valid JSON is a `ValidationError` (HTTP 400) since 0.5.0 — it is no longer silently treated as empty; an absent/empty body remains tolerated (query-string-only calls). Bodies above the ceiling (`MAX_BODY_BYTES`, default 1 MiB, or the endpoint's `max_body_bytes`) are HTTP 413 before buffering. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
+REST and MCP share one validation engine: `mcp_definition` is compiled to a pydantic model (`restmcp/schema.py: build_arg_model`), and both transports validate against it, so they never diverge. Parameters are accepted from the query string and/or the JSON body (body wins on conflicts). Coercion is lax for numbers — `"5"`, `5.0` and `"5.0"` all become integer `5` — with one deliberate guard: a boolean is rejected where a number is expected. Booleans are strict since 0.8.0: a `boolean` property accepts only JSON `true`/`false` (`"true"`, `"yes"`, `"on"`, `1`, `0` are a `ValidationError`; 0.7.x accepted pydantic's lax inputs); in the REST query string, which carries no types, `true` and `false` in any case (`?flag=true`, `?flag=TRUE`) are the only accepted spellings — `1`, `yes`, `on` are rejected; the same applies to an `enum` with a boolean member (`Literal[True, "auto"]`). Strictness is for client input only: declared defaults are coerced with 0.7's lax rules, so `flag: bool = 0` or `{"type": "boolean", "default": "false"}` still register (as `False`). A property with an `enum` (from `Literal[...]` or hand-written) accepts only its members since 0.8.0 (it was only published before). With a declared `type`, the value is validated by that type first and must then be a member, so the callback gets the same Python type as in 0.7 (an integer enum takes `"2"`/`2.0` → `2`, never a boolean; a `number` enum hands over floats); without a `type` (mixed literal or untyped hand-written enum), the callback gets the matched member itself (`{"enum": [1, 2]}`: `"1"`, `1` and `1.0` all arrive as the int `1` — 0.7 passed the string `"1"` and rejected `1`; declare `"type": "string"` with string members to keep strings). A typed enum with no member of its declared type (`{"type": "string", "enum": [1, 2]}`) registers with a `UserWarning` (no client value can pass). A hand-written enum whose `default` is outside the set (top level or inside `items`) registers with a `UserWarning` naming the tool and parameter (an import error under `-W error`); the default is used when the client omits the parameter, but a client cannot send it. Enums whose members are not str/int/float/bool/null (objects, lists) are still published but not enforced. Every declared property is passed to the callback (defaults included), so the callback signature must accept them all — checked at registration. Declared defaults are validated and coerced at registration; an explicit `null` is accepted only when the property's default is `null`. Parameter names must be valid Python identifiers and must not start with `_` or `model_` (registration error otherwise). An unknown key in the JSON body is a `ValidationError` (HTTP 400); unknown keys in the query string are ignored. A missing required parameter (a property with no `default`) or a non-object body are also 400. A body that is present but is not valid JSON is a `ValidationError` (HTTP 400) since 0.5.0 — it is no longer silently treated as empty; an absent/empty body remains tolerated (query-string-only calls). Every one of these framework rejections carries `code: "validation_error"` since 0.8.0 (it was `null`), with `error_type: "ValidationError"` and HTTP 400; the message is `<parameter>: <what was expected>` joined by `; ` (e.g. `"confirm: Input should be a valid boolean"`, `"mode: Input should be 'a' or 'b'"`, `"bogus: Extra inputs are not permitted"`, `"n: Field required"`) and never contains the rejected value (an unknown parameter's name is cut to 64 characters). Over MCP the same failures return `isError: true` with that same envelope (same message) as `structuredContent` — before 0.8.0 MCP answered fastmcp's raw pydantic text, without envelope or `code`, echoing the rejected value. A `ValidationError` raised by a callback keeps its own `code` (`null` unless set), so `"validation_error"` always means "the framework rejected the arguments". Bodies above the ceiling (`MAX_BODY_BYTES`, default 1 MiB, or the endpoint's `max_body_bytes`) are HTTP 413 before buffering. Any other exception becomes HTTP 500 with a generic message (the traceback goes to the server log, never the response).
 
 ### 11.8 Choosing the transport (expose) — 0.3.0+
 
@@ -582,7 +587,7 @@ Parameters of `asgi_app()`:
 | Parameter | Default | Description |
 |---|---|---|
 | `mcp_path` | `/mcp-protocol` | Exact path where the MCP endpoint is served (MCP clients connect there). |
-| `transport` | `http` | MCP transport: `http` (Streamable HTTP, fastmcp 3.x default), `streamable-http` (fastmcp 2.x alias), or `sse`. |
+| `transport` | `http` | MCP transport: `http` (Streamable HTTP, the default), `streamable-http` (an alias of `http` that fastmcp still accepts), or `sse`. |
 | `public_paths` | `("/health", "/mcp/tools")` | Routes exempt from authentication when `AUTH_API_KEY` is set. |
 | `lifespan` | `None` | Application startup/shutdown hook: a callable `lifespan(app)` (the parent Starlette app) returning an async context manager, e.g. an `@asynccontextmanager` function, to open/close HTTP clients or pools (store them in a class attribute or module-level variable your DataSources read: the `app` it receives is the parent Starlette app, whose `app.state` callbacks cannot reach). Chained to the FastMCP lifespan: FastMCP enters first and exits last; the app's lifespan runs inside it. An exception before the `yield` propagates (not wrapped in an `ExceptionGroup`) and the server does not start. `None` keeps FastMCP's lifespan alone. |
 
@@ -615,7 +620,8 @@ The `/mcp/tools` route returns the `version` field read from the installed packa
 
 The MCP server is built by the `McpApp` class, which creates a `FastMCP("restmcp")` and registers each handler as a tool. Only handlers on the MCP surface participate (`Server.mcp_handlers` — endpoints with `expose = "rest"` are excluded, see 11.8). For each endpoint, restmcp dynamically builds a typed wrapper function from the `mcp_definition`:
 
-- The JSON type of each property is mapped to the Python type (`string` to `str`, `integer` to `int`, `number` to `float`, `boolean` to `bool`, `object` to `dict`, `array` to `List[item]`).
+- The JSON type of each property is mapped to the Python type (`string` to `str`, `integer` to `int`, `number` to `float`, `boolean` to `pydantic.StrictBool` since 0.8.0, `object` to `dict`, `array` to `List[item]`); a property with an `enum` maps to `Literal[...]` (0.8.0+). The mapping is `restmcp/schema.py: python_type_for`, shared with the REST model.
+- A restmcp middleware runs before fastmcp on every `tools/call` (0.8.0+): it checks `required_scope` first (same principal as the wrapper; no-op with auth disabled), then validates the arguments with the endpoint's REST argument model. An under-scoped key gets `forbidden_scope`; invalid arguments get `isError: true` with the error envelope (`code: "validation_error"`) as `structuredContent`, never fastmcp's raw pydantic text. Valid arguments are then validated a second time by fastmcp (same types, negligible cost). `McpApp.build()` raises `TypeError` for a handler without `_arg_model` (fail closed). Protocol-level errors the MCP SDK raises before a tool is resolved (e.g. a malformed JSON-RPC batch) are outside restmcp and may quote the request.
 - A property whose `default` is `None` becomes `Optional[...]`.
 - Each parameter is exposed as keyword-only, with the description embedded via `pydantic.Field`.
 - The async wrapper invokes the same `run_callback`, keeping the sync/async contract identical to REST.
@@ -645,10 +651,10 @@ any `RestMCPException` maps to `isError` + the envelope as
 `structuredContent`; fastmcp's own exceptions (`FastMCPError`/`ToolError`,
 the SDK's `MCPError`) pass through to fastmcp untouched; anything else maps to
 the generic `InternalServerError` envelope, never the exception text. `expose = "rest"` is
-not a scope mitigation anymore. Order of checks: over MCP, fastmcp validates
-the arguments before the scope check, so a key without the scope that sends
-invalid arguments gets a validation error rather than `forbidden_scope` (the
-callback runs in neither case), while REST checks the scope first. Original section:
+not a scope mitigation anymore. Order of checks (0.8.0+): the scope comes
+first on both transports, so a key without the scope gets `forbidden_scope`
+whatever its arguments, and a key with it then gets `code: "validation_error"`
+for invalid arguments (until 0.7.x MCP validated the arguments first). Original section:
 
 
 Authentication is via Bearer token, enabled only when the environment variable `AUTH_API_KEY` is defined. When absent, all routes are open.
@@ -947,7 +953,7 @@ The `Service` accepts the `repo=...` override; the `Repository` accepts the `dat
 - **Typed parameters:** a `{"type": "string", "format": "date-time"}` parameter arrives as a string; convert it to datetime.
 - **Caching:** wrap expensive Service methods with `@cached_method(ttl=seconds, maxsize=128)`. The key comes from the arguments (via repr), so it works with list/dict arguments. The store is bounded and self-purging. Cache plain data, not rich objects.
 - **Folders vs suffixes:** only class suffixes are mandatory; folder names are free.
-- **Dependencies:** 0.7.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it).
+- **Dependencies:** 0.8.0 requires `fastmcp>=3.4`; the test suite passes on fastmcp 4.2.1, 3.4.11 and 3.4.0 (fastmcp 3.0–3.3 and 2.x fail it).
 
 ---
 
@@ -961,6 +967,9 @@ The `Service` accepts the `repo=...` override; the `Repository` accepts the `dat
 | HTTP 401 on all protected routes | `AUTH_API_KEY` set and token missing or incorrect in the header. | Send `Authorization: Bearer <key>` with a valid key. |
 | Endpoint not showing up in `/mcp/tools` | Missing `autodiscover("endpoints")`, or the file starts with `_`, or `url`/`method`/`callback` missing, or `disabled = True`. | Ensure autodiscover, the file name, and the required attributes. |
 | `ValidationError` "Extra inputs are not permitted" | The JSON body contains a key not present in the schema properties. | Send only the parameters declared in the callback. |
+| `ValidationError` "Input should be a valid boolean" (0.8.0+) | A boolean parameter received `"true"`, `"yes"`, `1`, `0`, etc. Booleans are strict since 0.8.0. | Send JSON `true`/`false`; in a query string, `?flag=true` / `?flag=false` (any case). |
+| `UserWarning` "... is not in its enum ..." at import (0.8.0+) | A hand-written `mcp_definition` declares a `default` outside its `enum`. | Put the default in the enum (or fix the enum); the app still runs meanwhile. |
+| `ValidationError` "Input should be 'a' or 'b'" (0.8.0+) | A `Literal`/`enum` parameter received a value outside the set. | Send one of the listed members (they are in the tool's `enum`). |
 | `TypeError` "invalid parameter name" at import | A property name starts with `_`/`model_` or is not a valid identifier. | Rename the parameter (pydantic reserves those forms). |
 | Event loop stalling under load | A blocking call inside an `async def` callback. | Use async I/O in the async callback, or make the callback synchronous (runs in a thread pool). |
 
@@ -1088,6 +1097,10 @@ class GetPicsEndpoint(Endpoint):
         """
         ...
 ```
+
+Since 0.8.0 `visible` accepts only JSON `true`/`false` (body or MCP arguments)
+or `?visible=true` / `?visible=false` (any case) in a query string; `"yes"`, `"1"`, `1`,
+`"on"` answer HTTP 400 / MCP `isError` with `code: "validation_error"`.
 
 ### 28.6 Endpoint with no parameters
 
@@ -1453,7 +1466,7 @@ autodiscover("endpoints")
 
 app = Server.get_instance().asgi_app(
     mcp_path="/mcp-protocol",                 # where MCP clients connect
-    transport="http",                         # Streamable HTTP (fastmcp 3.x default)
+    transport="http",                         # Streamable HTTP (the default)
     public_paths=("/health", "/mcp/tools"),   # routes without auth
 )
 ```

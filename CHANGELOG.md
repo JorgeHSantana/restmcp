@@ -11,6 +11,94 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-18
+
+Stricter input handling on both transports: strict booleans, `Literal` as
+`enum`, and a machine-readable `code` on every argument the framework rejects.
+
+### Changed (breaking/behaviour changes)
+- **Booleans are strict**: a parameter annotated `bool` (or declared
+  `{"type": "boolean"}`) accepts only JSON `true`/`false`, on REST and on MCP
+  `tools/call`. `"true"`, `"yes"`, `"on"`, `1`, `0` — coerced by pydantic-lax
+  until 0.7.x — are now a validation error (HTTP 400 / `isError`). Optional
+  booleans still accept `null` and integers/numbers still reject booleans.
+  Strictness is for what the client sends: declared defaults keep 0.7's lax
+  coercion, so `flag: bool = 0` or a hand-written
+  `{"type": "boolean", "default": "false"}` still register (as `False`); a
+  default 0.7 rejected (`"banana"`) still raises. In a REST query string, which
+  carries no types, `true`/`false` in any case (`true`, `True`, `FALSE`) are
+  the only accepted spellings; `?flag=1`, `?flag=yes`, `?flag=on` are rejected.
+  Clients that send `"true"`/`1` in a JSON body or MCP arguments must send
+  JSON booleans.
+- **`Literal[...]` is published as `enum` and enforced**: `Literal["a", "b"]`
+  (also `Optional[...]`, with a default, and `list[Literal[...]]`) was reduced
+  to `{"type": "string"}` and accepted any string; it now appears as
+  `{"type": "string", "enum": ["a", "b"]}` in MCP `tools/list`, `/mcp/tools`
+  and OpenAPI, and a value outside the set is a validation error. Integer
+  literals (`Literal[1, 2]` → `{"type": "integer", "enum": [1, 2]}`) take what
+  `int` takes (`2`, `"2"`, `2.0`), never `true`; float literals
+  (`Literal[1.5, 2.5]`) publish `type: number`; `Union[Literal["a"],
+  Literal["b"]]` is treated as `Literal["a", "b"]`; a mixed
+  `Literal[True, "auto"]` publishes a bare `enum`, and its query-string
+  `true`/`false` become booleans. An `enum` in a hand-written `mcp_definition`
+  (str/int/float/bool/null members) is now enforced as well — it used to be
+  published only. With a declared `type` the value is validated by that type
+  first, so the callback receives the same Python type as in 0.7 (a
+  `{"type": "number", "enum": [1, 2]}` still hands over floats).
+  **Untyped hand-written enums change type**: `{"enum": [1, 2]}` with no
+  `type` was a plain string in 0.7 (the callback got `"1"`, JSON `1` was
+  rejected); it now hands the callback the matched member — an int for `"1"`,
+  `1` or `1.0` — and accepts JSON `1`. To keep strings, declare
+  `"type": "string"` with string members (`{"type": "string", "enum": ["1", "2"]}`).
+  A typed enum with no member of its declared type
+  (`{"type": "string", "enum": [1, 2]}`) registers with a `UserWarning`, since
+  no client value can pass it.
+  Defaults outside the set: a hand-written enum whose `default` is not a
+  member — at the top level or inside `items`
+  (`{"type": "array", "items": {"enum": ["a", "b"]}, "default": ["c"]}`) —
+  **does not raise**: registration emits a `UserWarning` naming the
+  tool and parameter, the default is still used when the client omits the
+  parameter, and a client cannot send it; a `Literal` annotation whose default
+  is not a member (`mode: Literal["a", "b"] = "c"`) raises `TypeError` at class
+  definition (an author type error).
+- **`code: "validation_error"` on rejected arguments**: wrong type, missing
+  required, unknown parameter, value outside an `enum`, non-boolean for a
+  boolean, and a body that is not a JSON object still answer HTTP 400 with
+  `error_type: "ValidationError"`, but `code` is `"validation_error"` instead
+  of `null`. Over MCP the same failures now return `isError: true` with the
+  shared envelope (same message as REST, `code: "validation_error"`) as
+  `structuredContent`; until 0.7.x they returned fastmcp's raw pydantic text,
+  without envelope or `code`, and echoed the rejected value
+  (`input_value='...'`). The message names each parameter and what it expects
+  (`"confirm: Input should be a valid boolean"`), never the rejected value. A
+  `ValidationError` raised by a callback keeps its own `code`. The MCP text for
+  a missing argument changed accordingly (`"n: Field required"`, was fastmcp's
+  `"Missing required keyword only argument"`). An unknown parameter's name is
+  cut to 64 characters in the message.
+- **MCP checks `required_scope` before the arguments**, as REST does: a key
+  without the scope now gets `forbidden_scope` whatever it sends (0.7.x
+  validated the arguments first and answered a validation error). With auth
+  disabled nothing changes.
+- **`McpApp.build()` fails closed**: a handler without `_arg_model` raises
+  `TypeError` (only reachable when building MCP from objects that are not
+  registered `Endpoint`s).
+
+### Notes
+- The new registration warnings are `UserWarning`s raised at import time:
+  under `python -W error` or pytest `filterwarnings = error` they become
+  import errors — fix the declaration or filter `UserWarning` from `restmcp`.
+- Over MCP, valid arguments are validated twice (restmcp's middleware, then
+  fastmcp, same types) — negligible cost, kept so fastmcp's own path is
+  untouched.
+- Protocol-level errors the MCP SDK raises before a tool is resolved (e.g. a
+  malformed JSON-RPC batch) are outside restmcp and may quote the request.
+
+### Docs
+- README and RAG knowledge base: parameter types and what each accepts, strict
+  booleans, `Literal`/`enum`, the `validation_error` code; the stale
+  "fastmcp 2.x alias" text for `transport="streamable-http"` now says it is an
+  alias of `http`.
+
 ## [0.7.0] - 2026-11-17
 
 One error envelope for every transport, `required_scope` enforced on MCP, and
@@ -286,7 +374,8 @@ CLI (`restmcp new`), `Returns:` docstring requirement for inferred definitions,
 publish workflow (PyPI + GitHub Releases). See git history for the
 commit-level record.
 
-[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/JorgeHSantana/restmcp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/JorgeHSantana/restmcp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/JorgeHSantana/restmcp/compare/v0.5.1...v0.6.0

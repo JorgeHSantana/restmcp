@@ -763,11 +763,14 @@ def test_explicit_null_rejected_when_default_is_not_none():
     assert r.json()["error_type"] == "ValidationError"
 
 
-def test_lax_boolean_inputs_accepted():
-    # pydantic-lax bool inputs (1/0, "on"/"off", "yes"/"no") are accepted on
-    # both transports; pinned here as intended (finding 9).
+def test_lax_boolean_inputs_rejected():
+    # Until 0.7.x pydantic-lax bool inputs (1/0, "on"/"off", "yes"/"no") were
+    # accepted (finding 9). Since 0.8.0 a boolean takes JSON true/false only,
+    # on both transports (see test_strict_input.py).
     _make_typed_endpoint()
     client = TestClient(Server.get_instance().app)
-    assert client.post("/api/typed", json={"n": 1, "flag": 1}).json()["result"]["flag"] is True
-    assert client.post("/api/typed", json={"n": 1, "flag": "on"}).json()["result"]["flag"] is True
-    assert client.post("/api/typed", json={"n": 1, "flag": "no"}).json()["result"]["flag"] is False
+    for lax in (1, 0, "on", "no", "true"):
+        r = client.post("/api/typed", json={"n": 1, "flag": lax})
+        assert r.status_code == 400
+        assert r.json()["code"] == "validation_error"
+    assert client.post("/api/typed", json={"n": 1, "flag": True}).json()["result"]["flag"] is True
