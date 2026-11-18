@@ -187,7 +187,11 @@ def _argument_validation_middleware(handlers: dict):
     from pydantic import ValidationError as PydanticValidationError
 
     from restmcp.auth import current_auth
-    from restmcp.endpoint import argument_validation_error, error_envelope
+    from restmcp.endpoint import (
+        argument_validation_error,
+        error_envelope,
+        internal_error_envelope,
+    )
     from restmcp.exceptions import RestMCPException
 
     class ArgumentValidation(Middleware):
@@ -203,6 +207,12 @@ def _argument_validation_middleware(handlers: dict):
                         error_envelope(argument_validation_error(e), name))
                 except RestMCPException as e:
                     return _error_result(error_envelope(e, name))
+                except Exception:
+                    # e.g. a custom auth layer's principal without "scopes":
+                    # same answer the wrapper gave in 0.7 — traceback to the
+                    # log, generic envelope to the client, callback not run.
+                    _logger.error("Unhandled error in tool %r", name, exc_info=True)
+                    return _error_result(internal_error_envelope(name))
             return await call_next(context)
 
     return ArgumentValidation()

@@ -3,6 +3,7 @@ import re
 import types
 import typing
 import warnings
+from dataclasses import dataclass
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import (
@@ -13,7 +14,6 @@ from pydantic import (
     StrictBool,
     TypeAdapter,
     ValidationError as PydanticValidationError,
-    WithJsonSchema,
     create_model,
 )
 from pydantic_core import PydanticCustomError
@@ -36,12 +36,35 @@ def _reject_bool(v):
 _ENUM_MEMBER_TYPES = (str, int, float, type(None))  # bool is an int
 
 
+_NO_MATCH = object()
+
+
+def _match(v, values):
+    """The member of ``values`` equal to ``v`` — never a bool for a number or a
+    number for a bool (``1 == True`` in Python, not in JSON) — else _NO_MATCH."""
+    for m in values:
+        if v == m and isinstance(v, bool) == isinstance(m, bool):
+            return m
+    return _NO_MATCH
+
+
 def _is_member(v, values) -> bool:
-    """``v`` is one of ``values`` — by equality, but never a bool for a number
-    or a number for a bool (``1 == True`` in Python, not in JSON)."""
-    return any(
-        v == m and isinstance(v, bool) == isinstance(m, bool) for m in values
-    )
+    return _match(v, values) is not _NO_MATCH
+
+
+@dataclass(frozen=True)
+class _EnumJsonSchema:
+    """Adds ``enum`` to the JSON Schema pydantic derives for the base type
+    (``{"type": "string"}`` -> ``{"type": "string", "enum": [...]}``) instead
+    of replacing it, so field-level ``description`` and ``default`` survive
+    in the schema fastmcp publishes in ``tools/list``."""
+
+    values: tuple
+
+    def __get_pydantic_json_schema__(self, core_schema, handler):
+        schema = handler(core_schema)
+        schema["enum"] = list(self.values)
+        return schema
 
 
 def _enum_error(values) -> PydanticCustomError:
@@ -74,29 +97,29 @@ def _enum_type(prop: dict, values: list, *, strict: bool):
     so the callback receives the same Python type as in 0.7 (``"2.0"`` -> 2
     for an integer enum, 1 -> 1.0 for a number enum) — and must then be a
     member. Without one (a mixed ``Literal["auto", True]``, or a hand-written
-    untyped enum), an exact member passes as is; a string that is not a
-    member is tried as a number (lax int/float rules) and passes if THAT is a
-    member. ``WithJsonSchema`` keeps ``enum`` in the schema fastmcp derives
-    for ``tools/list``.
+    untyped enum), the callback gets the matched member itself (``1.0`` -> 1);
+    a string that is not a member is tried as a number (lax int/float rules)
+    and passes if THAT matches a member. ``_EnumJsonSchema`` keeps ``enum`` in
+    the schema fastmcp derives for ``tools/list``.
     """
     def check_member(v):
         if not _is_member(v, values):
             raise _enum_error(values)
         return v
 
-    schema = {"enum": list(values)}
+    enum_schema = _EnumJsonSchema(tuple(values))
     t = prop.get("type")
     if t in ("string", "integer", "number", "boolean"):
         base = _scalar_type(t, strict=strict)
-        schema = {"type": t, **schema}
-        return Annotated[base, AfterValidator(check_member), WithJsonSchema(schema)]
+        return Annotated[base, AfterValidator(check_member), enum_schema]
 
     numeric = [m for m in values
                if isinstance(m, (int, float)) and not isinstance(m, bool)]
 
     def untyped_member(v):
-        if _is_member(v, values):
-            return v
+        member = _match(v, values)
+        if member is not _NO_MATCH:
+            return member
         if isinstance(v, str) and numeric:
             for target in (int, float):
                 try:
@@ -104,11 +127,12 @@ def _enum_type(prop: dict, values: list, *, strict: bool):
                         .validate_python(v)
                 except PydanticValidationError:
                     continue
-                if _is_member(n, values):
-                    return n
+                member = _match(n, values)
+                if member is not _NO_MATCH:
+                    return member
         raise _enum_error(values)
 
-    return Annotated[Any, BeforeValidator(untyped_member), WithJsonSchema(schema)]
+    return Annotated[Any, BeforeValidator(untyped_member), enum_schema]
 
 
 def _scalar_type(t: str, *, strict: bool = True):
@@ -194,27 +218,68 @@ def _coerce_default(name: str, prop: dict, tool: str | None):
     type at all raises TypeError, as in 0.7.
     """
     default = prop["default"]
+    strict_adapter = TypeAdapter(python_type_for(prop))
     try:
-        return TypeAdapter(python_type_for(prop)).validate_python(default)
+        return strict_adapter.validate_python(default)
     except PydanticValidationError:
         pass
-    plain = {k: v for k, v in prop.items() if k != "enum"}
     try:
-        value = TypeAdapter(python_type_for(plain, strict=False)).validate_python(default)
+        value = TypeAdapter(python_type_for(_without_enums(prop), strict=False)) \
+            .validate_python(default)
     except PydanticValidationError as e:
         raise TypeError(
             f"property {name!r}: default {default!r} does not match its declared type"
         ) from e
-    values = _usable_enum(prop)
-    if values is not None and not _is_member(value, values) and tool is not None:
-        warnings.warn(
-            f"{tool}: parameter {name!r} declares default {default!r}, which "
-            f"is not in its enum {values!r}; the default is kept when the "
-            f"client omits {name!r}, but a client cannot send it.",
-            UserWarning,
-            stacklevel=2,
-        )
+    try:
+        # lax-coerced but still refused by the request type: it is outside an
+        # enum (top level or in "items") — e.g. not a bool coerced to False
+        strict_adapter.validate_python(value)
+    except PydanticValidationError:
+        if tool is not None:
+            warnings.warn(
+                f"{tool}: parameter {name!r} declares default {default!r}, which "
+                f"is outside its enum; the default is kept when the client "
+                f"omits {name!r}, but a client cannot send it.",
+                UserWarning,
+                stacklevel=2,
+            )
     return value
+
+
+def _without_enums(prop: dict) -> dict:
+    """``prop`` with every ``enum`` removed, ``items`` included (recursively)."""
+    plain = {k: v for k, v in prop.items() if k != "enum"}
+    if isinstance(plain.get("items"), dict):
+        plain["items"] = _without_enums(plain["items"])
+    return plain
+
+
+def _member_fits(member, t: str) -> bool:
+    if t == "string":
+        return isinstance(member, str)
+    if t == "boolean":
+        return isinstance(member, bool)
+    if isinstance(member, bool) or not isinstance(member, (int, float)):
+        return False
+    return t == "number" or isinstance(member, int) or float(member).is_integer()
+
+
+def _warn_unreachable_enum(tool: str, name: str, prop: dict) -> None:
+    """Warn when a typed enum has no member of its declared type (e.g.
+    ``{"type": "string", "enum": [1, 2]}``): no client value can pass, so the
+    tool is uncallable with that parameter. Checks ``items`` too."""
+    values = _usable_enum(prop)
+    t = prop.get("type")
+    if values is not None and t in ("string", "integer", "number", "boolean") \
+            and not any(_member_fits(m, t) for m in values):
+        warnings.warn(
+            f"{tool}: parameter {name!r} declares type {t!r} but none of its "
+            f"enum members {values!r} is a {t}; no client value can pass.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if isinstance(prop.get("items"), dict):
+        _warn_unreachable_enum(tool, name, prop["items"])
 
 
 def field_spec_for(name: str, prop: dict, tool: str | None = None) -> tuple[Any, Any]:
@@ -230,6 +295,8 @@ def field_spec_for(name: str, prop: dict, tool: str | None = None) -> tuple[Any,
       callback sees the same type whether the client sent the value or
       omitted it.
     """
+    if tool is not None:
+        _warn_unreachable_enum(tool, name, prop)
     annotation = python_type_for(prop)
     if "default" not in prop:
         return annotation, ...
@@ -326,7 +393,7 @@ def _literal_values(annotation) -> tuple | None:
         if args and all(typing.get_origin(a) is Literal for a in args):
             values: list = []
             for a in args:
-                values += [v for v in typing.get_args(a) if v not in values]
+                values += [v for v in typing.get_args(a) if not _is_member(v, values)]
             return tuple(values)
     return None
 

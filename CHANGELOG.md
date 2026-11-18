@@ -45,8 +45,18 @@ Stricter input handling on both transports: strict booleans, `Literal` as
   published only. With a declared `type` the value is validated by that type
   first, so the callback receives the same Python type as in 0.7 (a
   `{"type": "number", "enum": [1, 2]}` still hands over floats).
+  **Untyped hand-written enums change type**: `{"enum": [1, 2]}` with no
+  `type` was a plain string in 0.7 (the callback got `"1"`, JSON `1` was
+  rejected); it now hands the callback the matched member — an int for `"1"`,
+  `1` or `1.0` — and accepts JSON `1`. To keep strings, declare
+  `"type": "string"` with string members (`{"type": "string", "enum": ["1", "2"]}`).
+  A typed enum with no member of its declared type
+  (`{"type": "string", "enum": [1, 2]}`) registers with a `UserWarning`, since
+  no client value can pass it.
   Defaults outside the set: a hand-written enum whose `default` is not a
-  member **does not raise** — registration emits a `UserWarning` naming the
+  member — at the top level or inside `items`
+  (`{"type": "array", "items": {"enum": ["a", "b"]}, "default": ["c"]}`) —
+  **does not raise**: registration emits a `UserWarning` naming the
   tool and parameter, the default is still used when the client omits the
   parameter, and a client cannot send it; a `Literal` annotation whose default
   is not a member (`mode: Literal["a", "b"] = "c"`) raises `TypeError` at class
@@ -74,6 +84,9 @@ Stricter input handling on both transports: strict booleans, `Literal` as
   registered `Endpoint`s).
 
 ### Notes
+- The new registration warnings are `UserWarning`s raised at import time:
+  under `python -W error` or pytest `filterwarnings = error` they become
+  import errors — fix the declaration or filter `UserWarning` from `restmcp`.
 - Over MCP, valid arguments are validated twice (restmcp's middleware, then
   fastmcp, same types) — negligible cost, kept so fastmcp's own path is
   untouched.

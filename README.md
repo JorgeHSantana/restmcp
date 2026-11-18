@@ -88,9 +88,12 @@ Input handling is stricter on **both** transports (REST and MCP `tools/call`):
   with a default, and `list[Literal[...]]`) is published with `enum` in
   `tools/list`, `/mcp/tools` and OpenAPI, and a value outside the set is
   rejected. An `enum` in a hand-written `mcp_definition` is enforced too (it was
-  only published); if its `default` is outside the set, registration emits a
-  `UserWarning` and keeps the default, while a `Literal` whose default is not a
-  member raises `TypeError` at class definition.
+  only published); if its `default` is outside the set (also inside `items`),
+  registration emits a `UserWarning` and keeps the default, while a `Literal`
+  whose default is not a member raises `TypeError` at class definition. An
+  untyped hand-written enum (`{"enum": [1, 2]}`) now hands the callback the
+  matched member (an int for `"1"`), where 0.7 handed a string. Under
+  `-W error` these warnings become import errors.
 - **Rejected arguments carry `code: "validation_error"`.** Still HTTP 400 with
   `error_type: "ValidationError"` (the `code` was `null`); over MCP the same
   envelope is the `structuredContent` of the `isError` result, which used to be
@@ -306,6 +309,7 @@ Schema property, and REST and MCP validate it with the same pydantic model:
 | `float` | `{"type": "number"}` | numbers, numeric strings; never a boolean |
 | `bool` | `{"type": "boolean"}` | JSON `true`/`false` only (0.8.0+); query string: `true`/`false`, any case |
 | `Literal["a", "b"]` | `{"type": "string", "enum": ["a", "b"]}` | a member of the set (0.8.0+), validated by the member type first: `Literal[1, 2]` takes `"2"`/`2.0` (as `int` does), never a boolean; `Literal[1.5, 2.5]` is `type: number` |
+| hand-written `{"enum": [1, 2]}` (no `type`) | as declared | the matched member (0.8.0+): `"1"`, `1`, `1.0` all reach the callback as the int `1` — 0.7 passed the string `"1"` and rejected `1`; declare `"type": "string"` with string members to keep strings |
 | `list[T]` | `{"type": "array", "items": <T>}` | a JSON array, each item validated as `T` |
 | `dict` | `{"type": "object"}` | a JSON object |
 

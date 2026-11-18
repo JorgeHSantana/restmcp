@@ -689,3 +689,192 @@ def test_float_union_and_mixed_literals(rest):
         for bad in ("ratio=3.5", "either=c", "mix=1", "mix=yes"):
             r = c.get(f"/api/more?{bad}")
             assert r.status_code == 400 and r.json()["code"] == "validation_error", bad
+
+
+# --- fix round 2 ---------------------------------------------------------------
+
+from typing import Annotated, Union
+
+
+def _tools_list_props(tool):
+    import asyncio
+
+    from fastmcp import Client
+
+    async def go():
+        async with Client(Server.get_instance().get_mcp()) as c:
+            return {t.name: t for t in await c.list_tools()}
+
+    t = asyncio.run(go())[tool]
+    # MCP SDK v2 (fastmcp 4.x) renamed inputSchema -> input_schema
+    schema = getattr(t, "input_schema", None) or t.inputSchema
+    return schema["properties"]
+
+
+def test_tools_list_keeps_description_on_literal_and_enum():
+    pytest.importorskip("fastmcp")
+
+    class DescribedEndpoint(Endpoint):
+        url = "/api/described"
+        method = "POST"
+
+        def callback(self, mode: Annotated[Literal["a", "b"], "the mode"] = "a",
+                     maybe: Annotated[Optional[Literal["x", "y"]], "maybe one"] = None,
+                     req: Annotated[Literal[1, 2], "required level"] = 1):
+            """x.
+
+            Returns: the values.
+            """
+            return {}
+
+    class HandDescribedEndpoint(Endpoint):
+        mcp_definition = {"name": "hand_described", "description": "x",
+                          "parameters": {"properties": {
+                              "color": {"type": "string", "enum": ["red", "blue"],
+                                        "description": "paint color", "default": "red"},
+                              "mix": {"enum": ["auto", True], "description": "mixed"},
+                              "tags": {"type": "array", "description": "tag list",
+                                       "items": {"type": "string", "enum": ["p", "q"]},
+                                       "default": None},
+                          }}}
+        url = "/api/hand-described"
+        method = "POST"
+
+        def callback(self, color, mix, tags=None):
+            return {}
+
+    props = _tools_list_props("described")
+    assert props["mode"]["description"] == "the mode"
+    assert props["mode"]["enum"] == ["a", "b"]
+    assert props["mode"]["type"] == "string"
+    assert props["mode"]["default"] == "a"
+    assert props["maybe"]["description"] == "maybe one"
+    assert props["maybe"]["default"] is None
+    assert _find_enum(props["maybe"]) == [["x", "y"]]
+    assert {"type": "string", "enum": ["x", "y"]} in props["maybe"]["anyOf"]
+    assert props["req"]["description"] == "required level"
+    assert props["req"]["type"] == "integer" and props["req"]["enum"] == [1, 2]
+
+    hand = _tools_list_props("hand_described")
+    assert hand["color"] == {"type": "string", "enum": ["red", "blue"],
+                             "description": "paint color", "default": "red"} or (
+        hand["color"]["description"] == "paint color"
+        and hand["color"]["enum"] == ["red", "blue"]
+        and hand["color"]["type"] == "string" and hand["color"]["default"] == "red")
+    assert hand["mix"]["description"] == "mixed"
+    assert hand["mix"]["enum"] == ["auto", True]
+    assert hand["tags"]["description"] == "tag list"
+    assert _find_enum(hand["tags"]) == [["p", "q"]]
+
+
+def test_array_items_enum_default_outside_set_warns_not_raises(rest):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        class LegacyItemsEndpoint(Endpoint):
+            mcp_definition = {"name": "legacy_items", "description": "x",
+                              "parameters": {"properties": {
+                                  "tags": {"type": "array",
+                                           "items": {"type": "string", "enum": ["a", "b"]},
+                                           "default": ["c"]}}}}
+            url = "/api/legacy-items"
+            method = "POST"
+
+            def callback(self, tags):
+                return {"tags": tags}
+
+    msgs = [str(w.message) for w in caught]
+    assert any("legacy_items" in m and "tags" in m for m in msgs), msgs
+    assert rest.post("/api/legacy-items", json={}).json()["result"] == {"tags": ["c"]}
+    _assert_rest_validation(rest.post("/api/legacy-items", json={"tags": ["c"]}),
+                            "legacy_items", "tags")
+    assert rest.post("/api/legacy-items", json={"tags": ["b"]}).json()["result"] == \
+        {"tags": ["b"]}
+
+
+def test_lax_bool_default_inside_bool_enum_does_not_warn():
+    from restmcp.schema import field_spec_for
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, value = field_spec_for("f", {"type": "boolean", "enum": [True, False],
+                                        "default": "false"}, "t")
+    assert value is False
+
+
+@pytest.mark.parametrize("prop", [
+    {"type": "string", "enum": [1, 2]},
+    {"type": "integer", "enum": ["a", "b"]},
+    {"type": "boolean", "enum": [1, 0]},
+    {"type": "array", "items": {"type": "string", "enum": [1]}},
+])
+def test_typed_enum_without_matching_member_warns(prop):
+    from restmcp.schema import field_spec_for
+
+    with pytest.warns(UserWarning, match=r"tool_x.*p"):
+        field_spec_for("p", prop, "tool_x")
+
+
+@pytest.mark.parametrize("prop", [
+    {"type": "string", "enum": ["a"]},
+    {"type": "integer", "enum": [1, 2]},
+    {"type": "number", "enum": [1, 2.5]},
+    {"type": "boolean", "enum": [True]},
+    {"enum": [1, "a"]},
+])
+def test_typed_enum_with_matching_member_is_silent(prop):
+    from restmcp.schema import field_spec_for
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        field_spec_for("p", prop, "tool_x")
+
+
+def test_literal_union_dedup_keeps_bool_and_int_apart():
+    from restmcp.schema import schema_for_annotation
+
+    assert schema_for_annotation(Union[Literal[1], Literal[True]]) == {"enum": [1, True]}
+    assert schema_for_annotation(Union[Literal[1], Literal[1, 2]]) == \
+        {"type": "integer", "enum": [1, 2]}
+
+
+def test_untyped_enum_hands_the_matched_member():
+    from pydantic import TypeAdapter
+    from restmcp.schema import python_type_for
+
+    ta = TypeAdapter(python_type_for({"enum": [1, 2]}))
+    for sent in (1.0, 1, "1", "1.0"):
+        got = ta.validate_python(sent)
+        assert got == 1 and type(got) is int, sent
+
+
+def test_principal_without_scopes_is_internal_error_not_crash(monkeypatch):
+    """A custom auth layer that publishes a principal without "scopes": the
+    middleware answers the generic internal-error envelope (as the wrapper did
+    in 0.7) — no raw JSON-RPC error — and the callback does not run."""
+    pytest.importorskip("fastmcp")
+    from restmcp.auth import current_auth
+
+    monkeypatch.setenv("AUTH_API_KEY", "painel:sk_1:read")
+    ran = []
+
+    class OddPrincipalEndpoint(Endpoint):
+        required_scope = "write"
+        mcp_definition = {"name": "odd_principal", "description": "x",
+                          "parameters": {"properties": {}}}
+        url = "/api/odd-principal"
+        method = "POST"
+
+        def callback(self):
+            ran.append(1)
+            return {}
+
+    token = current_auth.set({"name": "custom"})
+    try:
+        res = _mcp_memory_call("odd_principal", {})
+    finally:
+        current_auth.reset(token)
+    assert res.is_error
+    assert res.structured_content["error_type"] == "InternalServerError"
+    assert res.structured_content["error"] == "Internal server error"
+    assert ran == []
