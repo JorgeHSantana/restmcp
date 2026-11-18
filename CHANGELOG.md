@@ -11,6 +11,51 @@ this file move together — the publish workflow releases whatever version is in
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-18
+
+Stricter input handling on both transports: strict booleans, `Literal` as
+`enum`, and a machine-readable `code` on every argument the framework rejects.
+
+### Changed (breaking/behaviour changes)
+- **Booleans are strict**: a parameter annotated `bool` (or declared
+  `{"type": "boolean"}`) accepts only JSON `true`/`false`, on REST and on MCP
+  `tools/call`. `"true"`, `"yes"`, `"on"`, `1`, `0` — coerced by pydantic-lax
+  until 0.7.x — are now a validation error (HTTP 400 / `isError`). Optional
+  booleans still accept `null`, defaults are unchanged, and integers/numbers
+  still reject booleans. In a REST query string, which carries no types, the
+  literals `true`/`false` are the only accepted spellings (`?flag=true`);
+  `?flag=1`, `?flag=yes` are rejected. Clients that send `"true"`/`1` in a
+  JSON body or MCP arguments must send JSON booleans.
+- **`Literal[...]` is published as `enum` and enforced**: `Literal["a", "b"]`
+  (also `Optional[...]`, with a default, and `list[Literal[...]]`) was reduced
+  to `{"type": "string"}` and accepted any string; it now appears as
+  `{"type": "string", "enum": ["a", "b"]}` in MCP `tools/list`, `/mcp/tools`
+  and OpenAPI, and a value outside the set is a validation error. Integer
+  literals (`Literal[1, 2]` → `{"type": "integer", "enum": [1, 2]}`) work too:
+  they accept `2` or `"2"`, never `true`. An `enum` in a hand-written
+  `mcp_definition` (str/int/bool/null members) is now enforced as well — it
+  used to be published only. A `Literal` default outside its set fails at
+  registration.
+- **`code: "validation_error"` on rejected arguments**: wrong type, missing
+  required, unknown parameter, value outside an `enum`, non-boolean for a
+  boolean, and a body that is not a JSON object still answer HTTP 400 with
+  `error_type: "ValidationError"`, but `code` is `"validation_error"` instead
+  of `null`. Over MCP the same failures now return `isError: true` with the
+  shared envelope (same message as REST, `code: "validation_error"`) as
+  `structuredContent`; until 0.7.x they returned fastmcp's raw pydantic text,
+  without envelope or `code`, and echoed the rejected value
+  (`input_value='...'`). The message names each parameter and what it expects
+  (`"confirm: Input should be a valid boolean"`), never the rejected value. A
+  `ValidationError` raised by a callback keeps its own `code`. The MCP text for
+  a missing argument changed accordingly (`"n: Field required"`, was fastmcp's
+  `"Missing required keyword only argument"`).
+
+### Docs
+- README and RAG knowledge base: parameter types and what each accepts, strict
+  booleans, `Literal`/`enum`, the `validation_error` code; the stale
+  "fastmcp 2.x alias" text for `transport="streamable-http"` now says it is an
+  alias of `http`.
+
 ## [0.7.0] - 2026-11-17
 
 One error envelope for every transport, `required_scope` enforced on MCP, and
